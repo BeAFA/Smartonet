@@ -1,7 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../database/models.dart';
-// import 'package:intl/intl.dart';
 
 class DbConnector {
   static final DbConnector instance = DbConnector._init();
@@ -11,7 +10,7 @@ class DbConnector {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('scheduler_v2.db'); // Đổi tên file DB cho sạch
+    _database = await _initDB('scheduler_v2.db');
     return _database!;
   }
 
@@ -22,7 +21,6 @@ class DbConnector {
   }
 
   Future _createDB(Database db, int version) async {
-    // Tạo bảng 'notes' thay vì 'tasks'
     await db.execute('''
       CREATE TABLE notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +33,6 @@ class DbConnector {
     ''');
   }
 
-  // Đổi tên hàm saveTask -> saveNote
   Future<int> saveNote(Note note) async {
     final db = await instance.database;
     if (note.id == null) {
@@ -75,12 +72,16 @@ class DbConnector {
     }
   }
 
+  DateTime cleanDateTime(DateTime dt) {
+    return DateTime(dt.year, dt.month, dt.day, dt.hour, dt.minute);
+  }
+
   // --- THÊM MỚI: Kiểm tra trùng lịch vào khung giờ cụ thể ---
   Future<bool> checkConflict(DateTime newTime) async {
     final db = await instance.database;
     // Lấy chuỗi ISO của thời gian cần check
     // Lưu ý: Đảm bảo newTime đã được clean giây/mili giây về 0 nếu logic tạo note của bạn làm vậy
-    String timeStr = newTime.toIso8601String();
+    String timeStr = cleanDateTime(newTime).toIso8601String();
 
     final result = await db.query(
       'notes',

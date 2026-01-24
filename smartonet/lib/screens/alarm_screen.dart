@@ -14,10 +14,11 @@ class AlarmScreen extends StatefulWidget {
 }
 
 // Thêm SingleTickerProviderStateMixin để dùng Animation
-class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStateMixin {
+class _AlarmScreenState extends State<AlarmScreen>
+    with SingleTickerProviderStateMixin {
   Note? _currentNote;
   bool _isLoading = true;
-  
+
   // --- THÊM CHO ANIMATION ---
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
@@ -34,20 +35,23 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
       vsync: this,
     )..repeat(reverse: true); // Lặp lại và đảo ngược
 
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.15,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
   void dispose() {
-    _controller.dispose(); // Nhớ dispose controller
+    _controller.dispose();
     super.dispose();
   }
   // ---------------------------
 
   Future<void> _loadNoteData() async {
-    final note = await DbConnector.instance.getNoteById(widget.alarmSettings.id);
+    final note = await DbConnector.instance.getNoteById(
+      widget.alarmSettings.id,
+    );
     setState(() {
       _currentNote = note;
       _isLoading = false;
@@ -62,10 +66,14 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
   Future<void> _handleSnooze() async {
     if (_currentNote == null) return;
 
-    // Làm tròn thời gian hiện tại xuống phút gần nhất để tính toán chính xác hơn
     DateTime now = DateTime.now();
-    DateTime baseTime = DateTime(now.year, now.month, now.day, now.hour, now.minute);
-    DateTime newTime = baseTime.add(const Duration(minutes: 5));
+    DateTime newTime = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      now.hour,
+      now.minute,
+    ).add(const Duration(minutes: 5));
 
     bool isConflict = await DbConnector.instance.checkConflict(newTime);
 
@@ -82,27 +90,24 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
             TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text("Đóng"),
-            )
+            ),
           ],
         ),
       );
-    } else {
-      await AppointmentService.stopAlarm(widget.alarmSettings.id);
+      return;
+    }
 
-      setState(() {
-        _currentNote!.time = newTime;
-        _currentNote!.date = newTime;
-      });
+    setState(() {
+      _currentNote!.time = newTime;
+      _currentNote!.date = newTime;
+      _currentNote!.hasAppointment = true;
+    });
 
-      await DbConnector.instance.saveNote(_currentNote!);
-      await AppointmentService.scheduleAppointment(_currentNote!);
+    await DbConnector.instance.saveNote(_currentNote!);
+    await AppointmentService.scheduleAppointment(_currentNote!);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Đã hoãn báo thức 5 phút: ${newTime.hour}:${newTime.minute.toString().padLeft(2, '0')}")),
-        );
-        Navigator.pop(context);
-      }
+    if (mounted) {
+      Navigator.pop(context, true);
     }
   }
 
@@ -115,12 +120,17 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF2563EB), Color(0xFF1E40AF)], // Xanh đậm dần xuống dưới
-          )
+            colors: [
+              Color(0xFF2563EB),
+              Color(0xFF1E40AF),
+            ], // Xanh đậm dần xuống dưới
+          ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              ? const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                )
               : Column(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -132,7 +142,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                             color: Colors.white70,
                             fontSize: 18,
                             letterSpacing: 3,
-                            fontWeight: FontWeight.w500
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                         const SizedBox(height: 15),
@@ -144,7 +154,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                               color: Colors.white,
                               fontSize: 34,
                               fontWeight: FontWeight.bold,
-                              height: 1.2
+                              height: 1.2,
                             ),
                             textAlign: TextAlign.center,
                             maxLines: 2,
@@ -152,16 +162,19 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                           ),
                         ),
                         if (_currentNote?.content.isNotEmpty == true)
-                           Padding(
-                             padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-                             child: Text(
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                            child: Text(
                               _currentNote!.content,
-                              style: const TextStyle(color: Colors.white70, fontSize: 18),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 18,
+                              ),
                               textAlign: TextAlign.center,
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
-                                                     ),
-                           ),
+                            ),
+                          ),
                       ],
                     ),
 
@@ -179,8 +192,8 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                               color: Colors.white,
                               blurRadius: 30,
                               spreadRadius: 10,
-                            )
-                          ]
+                            ),
+                          ],
                         ),
                         child: const Icon(
                           Icons.access_alarm_rounded, // Icon trông mềm mại hơn
@@ -189,8 +202,8 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                         ),
                       ),
                     ),
-                    // ------------------------------------
 
+                    // ------------------------------------
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -209,7 +222,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                           onPressed: _handleSnooze,
                         ),
                       ],
-                    )
+                    ),
                   ],
                 ),
         ),
@@ -233,8 +246,16 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
             onPressed: onPressed,
             backgroundColor: color,
             elevation: 8,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), // Bo góc mềm hơn
-            child: Icon(icon, color: textColor == Colors.white ? Colors.white : const Color(0xFF2563EB), size: 38),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ), // Bo góc mềm hơn
+            child: Icon(
+              icon,
+              color: textColor == Colors.white
+                  ? Colors.white
+                  : const Color(0xFF2563EB),
+              size: 38,
+            ),
           ),
         ),
         const SizedBox(height: 12),
@@ -244,9 +265,9 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
             color: Colors.white,
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            letterSpacing: 0.5
+            letterSpacing: 0.5,
           ),
-        )
+        ),
       ],
     );
   }
