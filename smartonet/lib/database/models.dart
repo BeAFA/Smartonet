@@ -4,8 +4,7 @@ class Note {
   String content;
   DateTime date;
   DateTime time;
-  bool
-  hasAppointment;
+  bool hasAppointment;
 
   Note({
     this.id,
@@ -14,7 +13,15 @@ class Note {
     required this.date,
     required this.time,
     this.hasAppointment = true,
-  });
+  }) {
+    time = DateTime(
+      time.year,
+      time.month,
+      time.day,
+      time.hour,
+      time.minute,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
