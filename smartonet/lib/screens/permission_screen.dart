@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../main.dart'; // Để navigate về MainScreen
+import '../main.dart';
 
 class PermissionScreen extends StatefulWidget {
   const PermissionScreen({super.key});
@@ -62,17 +62,20 @@ class _PermissionScreenState extends State<PermissionScreen>
       _isSystemAlertWindowGranted = systemAlertStatus.isGranted;
     });
 
-    if (_isNotificationGranted && _isAlarmGranted && _isBatteryOptimized && _isSystemAlertWindowGranted) {
-  // Đợi 1 chút cho mượt
-  Future.delayed(Duration(microseconds: 500), () {
-    if (mounted) {
-       Navigator.pushReplacement(
-        context, 
-        MaterialPageRoute(builder: (_) => const MainScreen())
-      );
+    final bool allGranted =
+        _isNotificationGranted &&
+        _isAlarmGranted &&
+        _isBatteryOptimized &&
+        _isSystemAlertWindowGranted;
+
+    if (allGranted) {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+        );
+      }
     }
-  });
-}
   }
 
   Future<void> _requestPermission(Permission permission) async {
@@ -82,7 +85,6 @@ class _PermissionScreenState extends State<PermissionScreen>
 
   Future<void> _openAppSettings() async {
     await openAppSettings();
-    // Không cần gọi _checkPermissions ở đây vì didChangeAppLifecycleState sẽ lo
   }
 
   @override
@@ -96,13 +98,65 @@ class _PermissionScreenState extends State<PermissionScreen>
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            const Text(
-              "Để Smartonet hoạt động chính xác trên mọi thiết bị (đặc biệt là Xiaomi, Oppo...), vui lòng cấp đủ các quyền sau:",
-              style: TextStyle(fontSize: 16, color: Colors.black87),
-              textAlign: TextAlign.center,
+            // 5. Mục hướng dẫn thủ công (Dành riêng cho Xiaomi/Oppo)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    "Để Smartonet hoạt động chính xác trên mọi thiết bị (đặc biệt là Xiaomi, Oppo...), vui lòng cấp đủ các quyền sau:",
+                    style: TextStyle(fontSize: 16, color: Colors.black87),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: const [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.deepOrange,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "Dành cho máy Xiaomi, Oppo, Vivo...",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.deepOrange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Vui lòng nhấn nút bên dưới, tìm ứng dụng Smartonet và bật:\n"
+                    "• Tự khởi chạy (Autostart)\n"
+                    "• Hiển thị trên màn hình khóa\n"
+                    "• Hiển thị cửa sổ Pop-up",
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: _openAppSettings,
+                    child: const Text("Mở Cài đặt Ứng dụng"),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 20),
-
+            const SizedBox(height: 30),
+            const Text(
+              "Những quyền cơ bản:",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
+            ),
+            const SizedBox(height: 10),
             // 1. Quyền Thông báo
             _buildPermissionItem(
               title: "Thông báo",
@@ -144,53 +198,6 @@ class _PermissionScreenState extends State<PermissionScreen>
             ),
 
             const Divider(height: 30),
-
-            // 5. Mục hướng dẫn thủ công (Dành riêng cho Xiaomi/Oppo)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange.shade200),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: const [
-                      Icon(
-                        Icons.warning_amber_rounded,
-                        color: Colors.deepOrange,
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "Dành cho máy Xiaomi, Oppo, Vivo...",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.deepOrange,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Vui lòng nhấn nút bên dưới, tìm ứng dụng Smartonet và bật:\n"
-                    "• Tự khởi chạy (Autostart)\n"
-                    "• Hiển thị trên màn hình khóa\n"
-                    "• Hiển thị cửa sổ Pop-up",
-                    style: TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton(
-                    onPressed: _openAppSettings,
-                    child: const Text("Mở Cài đặt Ứng dụng"),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 30),
 
             // Nút Hoàn tất
             SizedBox(

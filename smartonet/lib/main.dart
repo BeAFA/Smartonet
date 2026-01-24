@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:alarm/utils/alarm_set.dart';
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -51,7 +52,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1;
   List<Note> _allNotes = [];
-  static StreamSubscription<AlarmSettings>? subscription;
+  StreamSubscription<AlarmSet>? _subscription;
 
   @override
   void initState() {
@@ -59,37 +60,49 @@ class _MainScreenState extends State<MainScreen> {
     _loadDataFromDB();
     _checkNotificationPermission();
 
-    subscription ??= Alarm.ringStream.stream.listen((alarmSettings) {
-        _navigateToAlarmScreen(alarmSettings);
-      });
+    _subscription = Alarm.ringing.listen((alarmSet) {
+      if (mounted && alarmSet.alarms.isNotEmpty) {
+    _navigateToAlarmScreen(alarmSet.alarms.first);
+  }
+    });
   }
 
   @override
   void dispose() {
+    _subscription?.cancel();
     super.dispose();
   }
 
   Future<void> _navigateToAlarmScreen(AlarmSettings alarmSettings) async {
     // Sử dụng PageRouteBuilder để tùy chỉnh hiệu ứng chuyển cảnh mượt mà hơn
-    await Navigator.push(
+    final result = await Navigator.push(
       context,
       PageRouteBuilder(
-        opaque: true, // Đảm bảo nó che phủ hoàn toàn (quan trọng cho lock screen)
-        transitionDuration: const Duration(milliseconds: 600), // Thời gian chuyển cảnh chậm hơn (0.6s)
+        opaque:
+            true, // Đảm bảo nó che phủ hoàn toàn (quan trọng cho lock screen)
+        transitionDuration: const Duration(
+          milliseconds: 600,
+        ), // Thời gian chuyển cảnh chậm hơn (0.6s)
         pageBuilder: (context, animation, secondaryAnimation) {
           return AlarmScreen(alarmSettings: alarmSettings);
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           // Tạo hiệu ứng Fade (mờ dần) kết hợp Scale (phóng to nhẹ)
-          
+
           // Đường cong chuyển động cho mượt (bắt đầu nhanh, kết thúc chậm)
-          const curve = Curves.easeOutCubic; 
-          
+          const curve = Curves.easeOutCubic;
+
           // Hiệu ứng phóng to từ 95% lên 100%
-          final scaleTween = Tween(begin: 0.95, end: 1.0).chain(CurveTween(curve: curve));
-          
+          final scaleTween = Tween(
+            begin: 0.95,
+            end: 1.0,
+          ).chain(CurveTween(curve: curve));
+
           // Hiệu ứng mờ dần từ 0% lên 100%
-          final fadeTween = Tween(begin: 0.0, end: 1.0).chain(CurveTween(curve: curve));
+          final fadeTween = Tween(
+            begin: 0.0,
+            end: 1.0,
+          ).chain(CurveTween(curve: curve));
 
           return FadeTransition(
             opacity: animation.drive(fadeTween),
@@ -101,9 +114,9 @@ class _MainScreenState extends State<MainScreen> {
         },
       ),
     );
-    
+
     // Sau khi màn hình báo thức đóng, load lại data
-    if (mounted) {
+    if (result == true && mounted) {
       _loadDataFromDB();
     }
   }
@@ -535,9 +548,6 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
-// ==========================================
-//          DIALOG FORM (Giữ nguyên)
-// ==========================================
 class NoteFormDialog extends StatefulWidget {
   final Note? noteData;
   final Function(String title, String content, DateTime? scheduledTime)
@@ -774,7 +784,7 @@ class ReminderCard extends StatelessWidget {
           children: [
             if (onEdit != null)
               IconButton(
-                icon: const Icon(Icons.edit, size: 20, color: Colors.grey),
+                icon: const Icon(Icons.edit, size: 20, color: Colors.orange),
                 onPressed: onEdit,
               ),
             if (onDelete != null)
