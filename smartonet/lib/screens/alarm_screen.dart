@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../database/models.dart';
 import '../utils/alarm_service.dart';
 import '../utils/dbconnector.dart';
+import 'dart:async';
 
 class AlarmScreen extends StatefulWidget {
   final AlarmSettings alarmSettings;
@@ -28,12 +29,10 @@ class _AlarmScreenState extends State<AlarmScreen>
     super.initState();
     _loadNoteData();
 
-    // --- CẤU HÌNH ANIMATION ---
-    // Tạo hiệu ứng "thở" (phóng to thu nhỏ nhẹ nhàng) trong 2 giây
     _controller = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
-    )..repeat(reverse: true); // Lặp lại và đảo ngược
+    )..repeat(reverse: true);
 
     _scaleAnimation = Tween<double>(
       begin: 1.0,
@@ -60,7 +59,7 @@ class _AlarmScreenState extends State<AlarmScreen>
 
   Future<void> _handleStop() async {
     await AppointmentService.stopAlarm(widget.alarmSettings.id);
-    if (mounted) Navigator.pop(context);
+    if (mounted) Navigator.pop(context, true);
   }
 
   Future<void> _handleSnooze() async {
@@ -96,6 +95,8 @@ class _AlarmScreenState extends State<AlarmScreen>
       );
       return;
     }
+
+    await AppointmentService.stopAlarm(widget.alarmSettings.id);
 
     setState(() {
       _currentNote!.time = newTime;
@@ -196,9 +197,9 @@ class _AlarmScreenState extends State<AlarmScreen>
                           ],
                         ),
                         child: const Icon(
-                          Icons.access_alarm_rounded, // Icon trông mềm mại hơn
+                          Icons.access_alarm_rounded,
                           size: 90,
-                          color: Colors.white,
+                          color: Color(0xFF2563EB),
                         ),
                       ),
                     ),
