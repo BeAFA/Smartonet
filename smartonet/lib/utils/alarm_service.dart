@@ -1,10 +1,9 @@
-import 'dart:io';
-
 import 'package:alarm/alarm.dart';
 import '../database/models.dart';
+import 'dart:async';
 
 class AppointmentService {
-  // Khởi tạo thư viện
+
   static Future<void> init() async {
     await Alarm.init();
   }
@@ -26,16 +25,13 @@ class AppointmentService {
     final alarmSettings = AlarmSettings(
       id: note.id!,
       dateTime: scheduledDateTime,
-      assetAudioPath: 'assets/alarmA.mp3',
+      assetAudioPath: 'assets/alarm_digital.wav',
       loopAudio: true,
       vibrate: true,
-      warningNotificationOnKill: Platform.isIOS || Platform.isAndroid,
-      androidFullScreenIntent: true,
+      warningNotificationOnKill: false,
+      androidFullScreenIntent: false,
       androidStopAlarmOnTermination: false,
-      volumeSettings: VolumeSettings.fade(
-        fadeDuration: Duration(seconds: 5),
-        volumeEnforced: false,
-      ),
+      volumeSettings: VolumeSettings.fixed(volumeEnforced: false),
       notificationSettings: NotificationSettings(
         title: 'Đến giờ: ${note.title}',
         body: note.content.isNotEmpty ? note.content : 'Nhấn để tắt báo thức',
@@ -47,7 +43,6 @@ class AppointmentService {
     await Alarm.set(alarmSettings: alarmSettings);
   }
 
-  // Hủy lịch hẹn
   static Future<void> cancelAppointment(int noteId) async {
     await Alarm.stop(noteId);
   }

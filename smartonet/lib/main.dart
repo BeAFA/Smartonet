@@ -17,6 +17,7 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+
   await AppointmentService.init();
   runApp(const Smartonet());
 }
@@ -62,8 +63,8 @@ class _MainScreenState extends State<MainScreen> {
 
     _subscription = Alarm.ringing.listen((alarmSet) {
       if (mounted && alarmSet.alarms.isNotEmpty) {
-    _navigateToAlarmScreen(alarmSet.alarms.first);
-  }
+        _navigateToAlarmScreen(alarmSet.alarms.first);
+      }
     });
   }
 
