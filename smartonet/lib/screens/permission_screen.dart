@@ -14,8 +14,9 @@ class _PermissionScreenState extends State<PermissionScreen>
     with WidgetsBindingObserver {
   bool _isNotificationGranted = false;
   bool _isAlarmGranted = false;
-  bool _isBatteryOptimized = false; // False nghĩa là ĐÃ tắt tối ưu pin (Tốt)
+  bool _isBatteryOptimized = false;
   bool _isSystemAlertWindowGranted = false;
+  bool _isAudioPermissionGranted = false;
 
   @override
   void initState() {
@@ -30,7 +31,6 @@ class _PermissionScreenState extends State<PermissionScreen>
     super.dispose();
   }
 
-  // Tự động check lại quyền khi người dùng quay lại app từ Cài đặt
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -39,27 +39,30 @@ class _PermissionScreenState extends State<PermissionScreen>
   }
 
   Future<void> _checkPermissions() async {
-    // 1. Thông báo
     final notifStatus = await Permission.notification.status;
 
-    // 2. Báo thức chính xác (Android 12+)
     PermissionStatus alarmStatus = PermissionStatus.granted;
     if (Platform.isAndroid) {
       alarmStatus = await Permission.scheduleExactAlarm.status;
     }
 
-    // 3. Tối ưu hóa pin (Cần IGNORE để báo thức chạy ngầm)
-    // ignoreBatteryOptimizations: Granted nghĩa là ĐÃ ĐƯỢC PHÉP CHẠY NGẦM (tức là đã tắt tối ưu hóa)
     final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
 
-    // 4. Vẽ trên ứng dụng khác (Quan trọng cho Xiaomi pop-up)
     final systemAlertStatus = await Permission.systemAlertWindow.status;
+
+    PermissionStatus audioStatus;
+    if (Platform.isAndroid && await Permission.audio.status.isGranted) {
+      audioStatus = await Permission.audio.status;
+    } else {
+      audioStatus = await Permission.storage.status;
+    }
 
     setState(() {
       _isNotificationGranted = notifStatus.isGranted;
       _isAlarmGranted = alarmStatus.isGranted;
       _isBatteryOptimized = batteryStatus.isGranted;
       _isSystemAlertWindowGranted = systemAlertStatus.isGranted;
+      _isAudioPermissionGranted = audioStatus.isGranted;
     });
 
     final bool allGranted =
@@ -151,10 +154,7 @@ class _PermissionScreenState extends State<PermissionScreen>
             const SizedBox(height: 30),
             const Text(
               "Những quyền cơ bản:",
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
             const SizedBox(height: 10),
             // 1. Quyền Thông báo
@@ -195,6 +195,21 @@ class _PermissionScreenState extends State<PermissionScreen>
               icon: Icons.layers,
               isGranted: _isSystemAlertWindowGranted,
               onPressed: () => _requestPermission(Permission.systemAlertWindow),
+            ),
+
+            _buildPermissionItem(
+              title: "Truy cập Âm thanh/Bộ nhớ",
+              description: "Cần thiết để phát nhạc chuông bạn tự tải lên.",
+              icon: Icons.music_note,
+              isGranted: _isAudioPermissionGranted,
+              onPressed: () async {
+                if (Platform.isAndroid) {
+                  await [Permission.audio, Permission.storage].request();
+                } else {
+                  await Permission.storage.request();
+                }
+                _checkPermissions();
+              },
             ),
 
             const Divider(height: 30),
