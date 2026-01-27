@@ -14,13 +14,11 @@ class AlarmScreen extends StatefulWidget {
   State<AlarmScreen> createState() => _AlarmScreenState();
 }
 
-// Thêm SingleTickerProviderStateMixin để dùng Animation
 class _AlarmScreenState extends State<AlarmScreen>
     with SingleTickerProviderStateMixin {
   Note? _currentNote;
   bool _isLoading = true;
 
-  // --- THÊM CHO ANIMATION ---
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
 
@@ -45,7 +43,6 @@ class _AlarmScreenState extends State<AlarmScreen>
     _controller.dispose();
     super.dispose();
   }
-  // ---------------------------
 
   Future<void> _loadNoteData() async {
     final note = await DbConnector.instance.getNoteById(
@@ -58,7 +55,7 @@ class _AlarmScreenState extends State<AlarmScreen>
   }
 
   Future<void> _handleStop() async {
-    await AppointmentService.stopAlarm(widget.alarmSettings.id);
+    await Alarm.stop(widget.alarmSettings.id);
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -96,7 +93,7 @@ class _AlarmScreenState extends State<AlarmScreen>
       return;
     }
 
-    await AppointmentService.stopAlarm(widget.alarmSettings.id);
+    await Alarm.stop(widget.alarmSettings.id);
 
     setState(() {
       _currentNote!.time = newTime;
@@ -114,7 +111,6 @@ class _AlarmScreenState extends State<AlarmScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Dùng gradient cho nền trông hiện đại hơn
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -124,7 +120,7 @@ class _AlarmScreenState extends State<AlarmScreen>
             colors: [
               Color(0xFF2563EB),
               Color(0xFF1E40AF),
-            ], // Xanh đậm dần xuống dưới
+            ],
           ),
         ),
         child: SafeArea(
@@ -203,8 +199,6 @@ class _AlarmScreenState extends State<AlarmScreen>
                         ),
                       ),
                     ),
-
-                    // ------------------------------------
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [

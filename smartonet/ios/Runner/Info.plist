@@ -52,5 +52,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Ứng dụng cần truy cập thư viện nhạc để bạn có thể chọn nhạc chuông báo thức.</string>
+	
 </dict>
 </plist>

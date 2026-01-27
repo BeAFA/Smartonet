@@ -28,7 +28,8 @@ class DbConnector {
         content TEXT NOT NULL,
         date TEXT NOT NULL,
         time TEXT NOT NULL,
-        has_appointment INTEGER NOT NULL
+        has_appointment INTEGER NOT NULL,
+        alarm_audio_path TEXT
       )
     ''');
   }

@@ -9,6 +9,7 @@ import '../utils/dbconnector.dart';
 import '../database/models.dart';
 import '../utils/alarm_service.dart';
 import 'screens/alarm_screen.dart';
+import '../utils/audio_service.dart';
 import 'screens/permission_screen.dart';
 
 void main() async {
@@ -18,6 +19,7 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
 
+  await AudioService().init();
   await AppointmentService.init();
   runApp(const Smartonet());
 }
@@ -213,7 +215,7 @@ class _MainScreenState extends State<MainScreen> {
         false;
 
     if (confirm) {
-      await AppointmentService.cancelAppointment(id);
+      await AppointmentService.cancelAlarm(id);
       await DbConnector.instance.deleteNote(id);
       _loadDataFromDB();
     }
@@ -225,7 +227,7 @@ class _MainScreenState extends State<MainScreen> {
       builder: (context) {
         return NoteFormDialog(
           noteData: existingNote,
-          onSubmit: (title, content, pickedDateTime) async {
+          onSubmit: (title, content, pickedDateTime, audioPath) async {
             bool hasAppt = pickedDateTime != null;
             DateTime saveDate = pickedDateTime ?? DateTime.now();
 
@@ -236,6 +238,7 @@ class _MainScreenState extends State<MainScreen> {
               date: saveDate,
               time: saveDate,
               hasAppointment: hasAppt,
+              alarmAudioPath: audioPath,
             );
 
             int id = await DbConnector.instance.saveNote(noteToSave);
@@ -245,7 +248,7 @@ class _MainScreenState extends State<MainScreen> {
               await AppointmentService.scheduleAppointment(noteToSave);
             } else {
               if (existingNote != null && existingNote.id != null) {
-                await AppointmentService.cancelAppointment(existingNote.id!);
+                await AppointmentService.cancelAlarm(existingNote.id!);
               }
             }
             await _loadDataFromDB();
@@ -551,7 +554,12 @@ class _MainScreenState extends State<MainScreen> {
 
 class NoteFormDialog extends StatefulWidget {
   final Note? noteData;
-  final Function(String title, String content, DateTime? scheduledTime)
+  final Function(
+    String title,
+    String content,
+    DateTime? scheduledTime,
+    String? audioPath,
+  )
   onSubmit;
   const NoteFormDialog({super.key, this.noteData, required this.onSubmit});
 
@@ -564,6 +572,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
   late TextEditingController _contentCtrl;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  String? _selectedAudioPath;
 
   @override
   void initState() {
@@ -573,6 +582,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     if (widget.noteData != null && widget.noteData!.hasAppointment) {
       _selectedDate = widget.noteData!.date;
       _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
+      _selectedAudioPath = widget.noteData?.alarmAudioPath;
     }
   }
 
@@ -676,7 +686,32 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                     ),
                 ],
               ),
-              const SizedBox(height: 25),
+              if (_selectedDate != null || _selectedTime != null) ...[
+                const SizedBox(height: 10),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.music_note, color: Colors.blue),
+                  title: Text(
+                    _selectedAudioPath == null
+                        ? "Nhạc mặc định"
+                        : _selectedAudioPath!.split('/').last,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      final String? newPath = await AudioService()
+                          .pickAudioFile();
+                      if (newPath != null) {
+                        setState(() {
+                          _selectedAudioPath = newPath;
+                        });
+                      }
+                    },
+                    child: const Text("Đổi nhạc"),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -698,6 +733,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       _titleCtrl.text,
                       _contentCtrl.text,
                       finalDT,
+                      _selectedAudioPath,
                     );
                     Navigator.pop(context);
                   },

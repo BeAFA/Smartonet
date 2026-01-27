@@ -1,14 +1,13 @@
 import 'package:alarm/alarm.dart';
 import '../database/models.dart';
 import 'dart:async';
+import 'dart:io';
 
 class AppointmentService {
-
   static Future<void> init() async {
     await Alarm.init();
   }
 
-  // Đặt lịch hẹn (Schedule Appointment)
   static Future<void> scheduleAppointment(Note note) async {
     if (!note.hasAppointment || note.id == null) return;
 
@@ -22,14 +21,22 @@ class AppointmentService {
 
     if (scheduledDateTime.isBefore(DateTime.now())) return;
 
+    String audioPath = 'assets/Default/alarm_digital.wav';
+
+    if (note.alarmAudioPath != null && note.alarmAudioPath!.isNotEmpty) {
+      final bool fileExists = await File(note.alarmAudioPath!).exists();
+      if (fileExists) {
+        audioPath = note.alarmAudioPath!;
+      }
+    }
     final alarmSettings = AlarmSettings(
       id: note.id!,
       dateTime: scheduledDateTime,
-      assetAudioPath: 'assets/alarm_digital.wav',
+      assetAudioPath: audioPath,
       loopAudio: true,
       vibrate: true,
-      warningNotificationOnKill: false,
-      androidFullScreenIntent: false,
+      warningNotificationOnKill: true,
+      androidFullScreenIntent: true,
       androidStopAlarmOnTermination: false,
       volumeSettings: VolumeSettings.fixed(volumeEnforced: false),
       notificationSettings: NotificationSettings(
@@ -43,11 +50,7 @@ class AppointmentService {
     await Alarm.set(alarmSettings: alarmSettings);
   }
 
-  static Future<void> cancelAppointment(int noteId) async {
-    await Alarm.stop(noteId);
-  }
-
-  static Future<void> stopAlarm(int id) async {
+  static Future<void> cancelAlarm(int id) async {
     await Alarm.stop(id);
   }
 }

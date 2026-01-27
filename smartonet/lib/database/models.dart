@@ -5,6 +5,7 @@ class Note {
   DateTime date;
   DateTime time;
   bool hasAppointment;
+  String? alarmAudioPath;
 
   Note({
     this.id,
@@ -13,6 +14,7 @@ class Note {
     required this.date,
     required this.time,
     this.hasAppointment = true,
+    this.alarmAudioPath,
   }) {
     time = DateTime(
       time.year,
@@ -31,6 +33,7 @@ class Note {
       'date': date.toIso8601String(),
       'time': time.toIso8601String(),
       'has_appointment': hasAppointment ? 1 : 0,
+      'alarm_audio_path': alarmAudioPath,
     };
   }
 
@@ -42,6 +45,7 @@ class Note {
       date: DateTime.parse(map['date']),
       time: DateTime.parse(map['time']),
       hasAppointment: map['has_appointment'] == 1,
+      alarmAudioPath: map['alarm_audio_path'],
     );
   }
 }
