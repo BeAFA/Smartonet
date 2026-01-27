@@ -16,7 +16,6 @@ class _PermissionScreenState extends State<PermissionScreen>
   bool _isAlarmGranted = false;
   bool _isBatteryOptimized = false;
   bool _isSystemAlertWindowGranted = false;
-  bool _isAudioPermissionGranted = false;
 
   @override
   void initState() {
@@ -50,35 +49,12 @@ class _PermissionScreenState extends State<PermissionScreen>
 
     final systemAlertStatus = await Permission.systemAlertWindow.status;
 
-    PermissionStatus audioStatus;
-    if (Platform.isAndroid && await Permission.audio.status.isGranted) {
-      audioStatus = await Permission.audio.status;
-    } else {
-      audioStatus = await Permission.storage.status;
-    }
-
     setState(() {
       _isNotificationGranted = notifStatus.isGranted;
       _isAlarmGranted = alarmStatus.isGranted;
       _isBatteryOptimized = batteryStatus.isGranted;
       _isSystemAlertWindowGranted = systemAlertStatus.isGranted;
-      _isAudioPermissionGranted = audioStatus.isGranted;
     });
-
-    final bool allGranted =
-        _isNotificationGranted &&
-        _isAlarmGranted &&
-        _isBatteryOptimized &&
-        _isSystemAlertWindowGranted;
-
-    if (allGranted) {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-        );
-      }
-    }
   }
 
   Future<void> _requestPermission(Permission permission) async {
@@ -89,6 +65,13 @@ class _PermissionScreenState extends State<PermissionScreen>
   Future<void> _openAppSettings() async {
     await openAppSettings();
   }
+
+
+  bool get _allPermissionsGranted =>
+      _isNotificationGranted &&
+      _isAlarmGranted &&
+      _isBatteryOptimized &&
+      _isSystemAlertWindowGranted;
 
   @override
   Widget build(BuildContext context) {
@@ -101,7 +84,6 @@ class _PermissionScreenState extends State<PermissionScreen>
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // 5. Mục hướng dẫn thủ công (Dành riêng cho Xiaomi/Oppo)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -197,34 +179,27 @@ class _PermissionScreenState extends State<PermissionScreen>
               onPressed: () => _requestPermission(Permission.systemAlertWindow),
             ),
 
-            _buildPermissionItem(
-              title: "Truy cập Âm thanh/Bộ nhớ",
-              description: "Cần thiết để phát nhạc chuông bạn tự tải lên.",
-              icon: Icons.music_note,
-              isGranted: _isAudioPermissionGranted,
-              onPressed: () async {
-                if (Platform.isAndroid) {
-                  await [Permission.audio, Permission.storage].request();
-                } else {
-                  await Permission.storage.request();
-                }
-                _checkPermissions();
-              },
-            ),
-
             const Divider(height: 30),
 
-            // Nút Hoàn tất
             SizedBox(
               width: double.infinity,
               height: 50,
               child: FilledButton(
                 onPressed: () {
-                  // Có thể check xem đủ quyền chưa mới cho đi tiếp
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (_) => const MainScreen()),
-                  );
+                  if (mounted && _allPermissionsGranted) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const MainScreen()),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          "Bạn chưa cấp đủ quyền để ứng dụng hoạt động chính xác",
+                        ),
+                      ),
+                    );
+                  }
                 },
                 child: const Text("Đã xong, Vào ứng dụng"),
               ),
