@@ -47,6 +47,8 @@ dependencies:
   audio_session: ^0.1.14
   just_audio: ^0.9.33
   file_picker: ^8.1.4
+  device_info_plus: ^12.3.0
+  shared_preferences: ^2.2.2
   
 
 dev_dependencies:

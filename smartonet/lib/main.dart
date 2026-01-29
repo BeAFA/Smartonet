@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:alarm/alarm.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/dbconnector.dart';
 import '../database/models.dart';
 import '../utils/alarm_service.dart';
@@ -21,11 +22,15 @@ void main() async {
 
   await AudioService().init();
   await AppointmentService.init();
-  runApp(const Smartonet());
+
+  final prefs = await SharedPreferences.getInstance();
+  final bool seenOnboarding = prefs.getBool('seen_onboarding') ?? false;
+  runApp(Smartonet(showOnboarding: !seenOnboarding));
 }
 
 class Smartonet extends StatelessWidget {
-  const Smartonet({super.key});
+  final bool showOnboarding;
+  const Smartonet({super.key, required this.showOnboarding});
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +45,7 @@ class Smartonet extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
       ),
-      home: const PermissionScreen(),
+      home: showOnboarding ? const PermissionScreen() : const MainScreen(),
     );
   }
 }
@@ -586,8 +591,16 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     }
   }
 
+  String _getAudioDisplayName() {
+    if (_selectedAudioPath == null) {
+      return "Mặc định hệ thống";
+    }
+    return _selectedAudioPath!.split('/').last;
+  }
+
   @override
   Widget build(BuildContext context) {
+    bool showMusicOption = _selectedDate != null && _selectedTime != null;
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
@@ -682,35 +695,91 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       onPressed: () => setState(() {
                         _selectedDate = null;
                         _selectedTime = null;
+                        _selectedAudioPath = null;
                       }),
                     ),
                 ],
               ),
-              if (_selectedDate != null || _selectedTime != null) ...[
-                const SizedBox(height: 10),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.music_note, color: Colors.blue),
-                  title: Text(
-                    _selectedAudioPath == null
-                        ? "Nhạc mặc định"
-                        : _selectedAudioPath!.split('/').last,
-                    style: const TextStyle(fontSize: 14),
+              if (showMusicOption) ...[
+                const SizedBox(height: 15),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
                   ),
-                  trailing: TextButton(
-                    onPressed: () async {
-                      final String? newPath = await AudioService()
-                          .pickAudioFile();
-                      if (newPath != null) {
-                        setState(() {
-                          _selectedAudioPath = newPath;
-                        });
-                      }
-                    },
-                    child: const Text("Đổi nhạc"),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.music_note, color: Colors.blue),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Âm thanh báo thức:",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              _getAudioDisplayName(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blueAccent,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          final String? newPath = await AudioService()
+                              .pickAudioFile();
+                          if (newPath != null) {
+                            setState(() {
+                              _selectedAudioPath = newPath;
+                            });
+                          }
+                        },
+                        child: const Text("Đổi nhạc"),
+                      ),
+                    ],
                   ),
                 ),
               ],
+              // if (_selectedDate != null || _selectedTime != null) ...[
+              //   const SizedBox(height: 10),
+              //   ListTile(
+              //     contentPadding: EdgeInsets.zero,
+              //     leading: const Icon(Icons.music_note, color: Colors.blue),
+              //     title: Text(
+              //       _selectedAudioPath == null
+              //           ? "Nhạc mặc định"
+              //           : _selectedAudioPath!.split('/').last,
+              //       style: const TextStyle(fontSize: 14),
+              //     ),
+              //     trailing: TextButton(
+              //       onPressed: () async {
+              //         final String? newPath = await AudioService()
+              //             .pickAudioFile();
+              //         if (newPath != null) {
+              //           setState(() {
+              //             _selectedAudioPath = newPath;
+              //           });
+              //         }
+              //       },
+              //       child: const Text("Đổi nhạc"),
+              //     ),
+              //   ),
+              // ],
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
