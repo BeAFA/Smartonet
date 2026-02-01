@@ -1,4 +1,5 @@
 import 'package:alarm/alarm.dart';
+import 'package:flutter/material.dart';
 import '../database/models.dart';
 import 'dart:async';
 import 'dart:io';
@@ -29,13 +30,22 @@ class AppointmentService {
         audioPath = note.alarmAudioPath!;
       }
     }
+
+    try {
+      await Alarm.stop(note.id!);
+    } catch (e) {
+      debugPrint("Lỗi dừng báo thức cũ, có thể là lần đầu đặt: $e");
+    }
+
+    await Future.delayed(const Duration(milliseconds: 300));
+
     final alarmSettings = AlarmSettings(
       id: note.id!,
       dateTime: scheduledDateTime,
       assetAudioPath: audioPath,
       loopAudio: true,
       vibrate: true,
-      warningNotificationOnKill: true,
+      warningNotificationOnKill: false,
       androidFullScreenIntent: true,
       androidStopAlarmOnTermination: false,
       volumeSettings: VolumeSettings.fixed(volumeEnforced: false),
