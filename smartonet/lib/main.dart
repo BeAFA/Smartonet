@@ -1,26 +1,36 @@
 import 'dart:io';
+import 'dart:async';
+import 'package:alarm/utils/alarm_set.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' hide Context;
-import 'package:smartonet/database/dbconnector.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite/sqflite.dart';
-import 'database/models.dart';
-import 'utils/dao.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:alarm/alarm.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/dbconnector.dart';
+import '../database/models.dart';
+import '../utils/alarm_service.dart';
+import 'screens/alarm_screen.dart';
+import '../utils/audio_service.dart';
+import 'screens/permission_screen.dart';
 
-void main() {
-  // --- CẤU HÌNH CHO WINDOWS/LINUX ---
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows || Platform.isLinux) {
-    // Khởi tạo FFI
     sqfliteFfiInit();
-    // Gán databaseFactory
     databaseFactory = databaseFactoryFfi;
   }
-  // ----------------------------------
-  runApp(const Smartonet());
+
+  await AudioService().init();
+  await AppointmentService.init();
+
+  final prefs = await SharedPreferences.getInstance();
+  final bool seenOnboarding = prefs.getBool('seen_onboarding') ?? false;
+  runApp(Smartonet(showOnboarding: !seenOnboarding));
 }
 
 class Smartonet extends StatelessWidget {
-  const Smartonet({super.key});
+  final bool showOnboarding;
+  const Smartonet({super.key, required this.showOnboarding});
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +45,7 @@ class Smartonet extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
       ),
-      home: const MainScreen(),
+      home: showOnboarding ? const PermissionScreen() : const MainScreen(),
     );
   }
 }
@@ -49,76 +59,217 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1;
-  final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _contentController = TextEditingController();
-
-  // 1. KHỞI TẠO DAO
-  final NoteDao _dao = NoteDao();
-
-  // 2. XÓA MOCK DATA, CHỈ KHAI BÁO LIST RỖNG
-  List<Map<String, dynamic>> _reminders = [];
-  List<Map<String, dynamic>> _notes = [];
+  List<Note> _allNotes = [];
+  StreamSubscription<AlarmSet>? _subscription;
 
   @override
   void initState() {
     super.initState();
-    // 3. GỌI HÀM LOAD DỮ LIỆU KHI MỞ APP
     _loadDataFromDB();
+    _checkNotificationPermission();
+
+    _subscription = Alarm.ringing.listen((alarmSet) {
+      if (mounted && alarmSet.alarms.isNotEmpty) {
+        _navigateToAlarmScreen(alarmSet.alarms.first);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _titleController.dispose();
-    _contentController.dispose();
+    _subscription?.cancel();
     super.dispose();
   }
 
-  // --- HÀM LOAD DỮ LIỆU TỪ SQLITE ---
+  Future<void> _navigateToAlarmScreen(AlarmSettings alarmSettings) async {
+    // Sử dụng PageRouteBuilder để tùy chỉnh hiệu ứng chuyển cảnh mượt mà hơn
+    final result = await Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque:
+            true, // Đảm bảo nó che phủ hoàn toàn (quan trọng cho lock screen)
+        transitionDuration: const Duration(
+          milliseconds: 600,
+        ), // Thời gian chuyển cảnh chậm hơn (0.6s)
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return AlarmScreen(alarmSettings: alarmSettings);
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          // Tạo hiệu ứng Fade (mờ dần) kết hợp Scale (phóng to nhẹ)
+
+          // Đường cong chuyển động cho mượt (bắt đầu nhanh, kết thúc chậm)
+          const curve = Curves.easeOutCubic;
+
+          // Hiệu ứng phóng to từ 95% lên 100%
+          final scaleTween = Tween(
+            begin: 0.95,
+            end: 1.0,
+          ).chain(CurveTween(curve: curve));
+
+          // Hiệu ứng mờ dần từ 0% lên 100%
+          final fadeTween = Tween(
+            begin: 0.0,
+            end: 1.0,
+          ).chain(CurveTween(curve: curve));
+
+          return FadeTransition(
+            opacity: animation.drive(fadeTween),
+            child: ScaleTransition(
+              scale: animation.drive(scaleTween),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+
+    // Sau khi màn hình báo thức đóng, load lại data
+    if (result == true && mounted) {
+      _loadDataFromDB();
+    }
+  }
+
+  // --- HÀM KIỂM TRA QUYỀN MỚI ---
+  Future<void> _checkNotificationPermission() async {
+    // Chỉ check trên Android/iOS
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+
+    // Kiểm tra trạng thái quyền Thông báo
+    var status = await Permission.notification.status;
+
+    // Nếu chưa được cấp quyền (Denied) hoặc bị từ chối vĩnh viễn (PermanentlyDenied)
+    if (status.isDenied || status.isPermanentlyDenied) {
+      if (!mounted) return;
+      _showPermissionDialog();
+    }
+
+    // Kiểm tra thêm quyền Lịch/Báo thức chính xác cho Android 12+ (Schedule Exact Alarm)
+    if (Platform.isAndroid) {
+      var alarmStatus = await Permission.scheduleExactAlarm.status;
+      if (alarmStatus.isDenied) {
+        // Thường Android sẽ tự cấp, nhưng nếu cần có thể request
+        await Permission.scheduleExactAlarm.request();
+      }
+    }
+  }
+
+  // --- HỘP THOẠI YÊU CẦU QUYỀN ---
+  void _showPermissionDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Bắt buộc người dùng phải chọn
+      builder: (ctx) => AlertDialog(
+        title: const Text("Cấp quyền thông báo"),
+        content: const Text(
+          "Để ứng dụng có thể nhắc nhở lịch hẹn đúng giờ, vui lòng cấp quyền thông báo.",
+        ),
+        actions: [
+          TextButton(
+            child: const Text("Để sau", style: TextStyle(color: Colors.grey)),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+          TextButton(
+            child: const Text(
+              "Cấp quyền",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              // Mở cài đặt hoặc yêu cầu quyền trực tiếp
+              await Permission.notification.request();
+              // Nếu bị chặn vĩnh viễn, mở App Settings
+              if (await Permission.notification.isPermanentlyDenied) {
+                openAppSettings();
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadDataFromDB() async {
-    // Gọi hàm lấy Notes
-    final notesData = await _dao.getNotes();
-
-    // GỌI HÀM MỚI: Lấy Reminder có kèm Title thật từ bảng Note
-    final remindersData = await _dao.getRemindersWithDetails();
-
+    final notes = await DbConnector.instance.getAllNotes();
     setState(() {
-      // Cập nhật list Ghi chú
-      _notes = notesData.toList();
-
-      // Cập nhật list Nhắc nhở (Cần xử lý data một chút để khớp với UI)
-      _reminders = remindersData.map((item) {
-        DateTime scheduled = DateTime.parse(item['scheduled_time']);
-        return {
-          'id': item['id'], // ID của bảng reminder
-          'note_id':
-              item['note_id'], // QUAN TRỌNG: ID của Note gốc để Join/Update
-          'title': item['title'] ?? 'Nhắc nhở #${item['note_id']}',
-          // Nên lấy title thật từ bảng Notes thông qua Join query trong DAO
-          'content':
-              item['content'] ?? '', // Cần lấy content thật từ bảng Notes
-          'time':
-              '${scheduled.hour}:${scheduled.minute.toString().padLeft(2, '0')}',
-          'date': '${scheduled.day}/${scheduled.month}',
-          'isUrgent': true,
-          'full_date': scheduled, // Lưu object gốc để tiện xử lý logic
-        };
-      }).toList();
+      _allNotes = notes;
     });
+  }
+
+  // --- LOGIC XÓA: Xóa 1 là mất cả 2 (Vì chung 1 ID) ---
+  Future<void> _handleDelete(int id) async {
+    bool confirm =
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Xác nhận xóa"),
+            content: const Text(
+              "Mục này sẽ bị xóa khỏi cả Lịch hẹn và Ghi chú. Bạn chắc chứ?",
+            ),
+            actions: [
+              TextButton(
+                child: const Text("Hủy"),
+                onPressed: () => Navigator.pop(ctx, false),
+              ),
+              TextButton(
+                child: const Text("Xóa", style: TextStyle(color: Colors.red)),
+                onPressed: () => Navigator.pop(ctx, true),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (confirm) {
+      await AppointmentService.cancelAlarm(id);
+      await DbConnector.instance.deleteNote(id);
+      _loadDataFromDB();
+    }
+  }
+
+  void _openNoteForm(BuildContext context, {Note? existingNote}) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return NoteFormDialog(
+          noteData: existingNote,
+          onSubmit: (title, content, pickedDateTime, audioPath) async {
+            bool hasAppt = pickedDateTime != null;
+            DateTime saveDate = pickedDateTime ?? DateTime.now();
+
+            Note noteToSave = Note(
+              id: existingNote?.id,
+              title: title,
+              content: content,
+              date: saveDate,
+              time: saveDate,
+              hasAppointment: hasAppt,
+              alarmAudioPath: audioPath,
+            );
+
+            int id = await DbConnector.instance.saveNote(noteToSave);
+            noteToSave.id = id;
+
+            if (hasAppt) {
+              await AppointmentService.scheduleAppointment(noteToSave);
+            } else {
+              if (existingNote != null && existingNote.id != null) {
+                await AppointmentService.cancelAlarm(existingNote.id!);
+              }
+            }
+            await _loadDataFromDB();
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // --- APP BAR ---
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Smartonet',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-            ),
-          ],
+        title: const Text(
+          'Smartonet',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
         ),
         actions: [
           IconButton(
@@ -127,139 +278,28 @@ class _MainScreenState extends State<MainScreen> {
           ),
           const SizedBox(width: 8),
           const CircleAvatar(
-            backgroundColor: Color.fromARGB(255, 68, 138, 255),
+            backgroundColor: Color(0xFF448AFF),
             child: Icon(Icons.person, color: Colors.white),
           ),
           const SizedBox(width: 16),
         ],
       ),
-
-      // --- BODY ---
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildAllNotes(), // Trang danh sách ghi chú
-          _buildDashboard(), // Trang chủ dashboard
-          _buildReminderList(), // Trang danh sách nhắc nhở
+          _buildAllList(
+            filterOnlyNotes: true,
+          ), // Tab 0: Ghi chú (Hiển thị tất cả)
+          _buildDashboard(), // Tab 1: Dashboard
+          _buildAllList(filterOnlyAppointments: true), // Tab 2: Lịch hẹn
         ],
       ),
-
-      // --- FLOATING ACTION BUTTON (Nút thêm mới) ---
-      floatingActionButton: Container(
-        margin: const EdgeInsets.only(bottom: 50),
-        height: 55,
-        width: 220,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(30), // Bo tròn dạng viên thuốc
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              spreadRadius: 1,
-              blurRadius: 6,
-              offset: const Offset(0, 3), // Tạo bóng đổ nhẹ để nút nổi lên
-            ),
-          ],
-        ),
-        child: Material(
-          color: const Color(0xFFE8EAF6), // Chuyển màu nền vào Material
-          borderRadius: BorderRadius.circular(30), // Bo góc cho Material
-          clipBehavior:
-              Clip.hardEdge, // Cắt bỏ phần hiệu ứng loang ra ngoài góc bo
-          child: Row(
-            children: [
-              // --- Nút bên trái: Thủ công ---
-              Expanded(
-                child: InkWell(
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(30),
-                  ),
-                  hoverColor: const Color(0xFF3F51B5).withOpacity(0.1),
-                  splashColor: const Color(0xFF3F51B5).withOpacity(0.2),
-
-                  onTap: () {
-                    // Gọi hàm mở form thủ công của bạn
-                    _openNoteForm(context);
-                  },
-                  child: Container(
-                    height:
-                        55, // Bắt buộc set chiều cao để vùng hover phủ kín nút
-                    alignment: Alignment.center,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(
-                          Icons.edit,
-                          color: Color(0xFF3F51B5),
-                          size: 20,
-                        ), // Màu Indigo đậm
-                        SizedBox(width: 8),
-                        Text(
-                          "Thủ công",
-                          style: TextStyle(
-                            color: Color(0xFF3F51B5),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // --- Đường kẻ dọc ngăn cách ---
-              Container(
-                width: 1,
-                height: 30,
-                color: Colors.grey.withOpacity(0.4),
-              ),
-
-              // --- Nút bên phải: Giọng nói ---
-              Expanded(
-                child: InkWell(
-                  hoverColor: const Color(0xFF3F51B5).withOpacity(0.1),
-                  splashColor: const Color(0xFF3F51B5).withOpacity(0.2),
-                  borderRadius: const BorderRadius.horizontal(
-                    right: Radius.circular(30),
-                  ),
-                  onTap: () {
-                    // TODO: Viết logic xử lý ghi âm tại đây
-                    print("Đã chọn giọng nói");
-                  },
-                  child: Container(
-                    height:
-                        55, // Bắt buộc set chiều cao để vùng hover phủ kín nút
-                    alignment: Alignment.center,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(Icons.mic, color: Colors.redAccent, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          "Giọng nói",
-                          style: TextStyle(
-                            color: Colors.redAccent,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      floatingActionButton: _buildCustomFAB(context),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-
-      // --- BOTTOM NAVIGATION ---
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (int index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
+        onDestinationSelected: (index) =>
+            setState(() => _selectedIndex = index),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.sticky_note_2_outlined),
@@ -274,65 +314,131 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.calendar_month_outlined),
             selectedIcon: Icon(Icons.calendar_month),
-            label: 'Lịch nhắc',
+            label: 'Lịch hẹn',
           ),
         ],
       ),
     );
   }
 
-  // --- WIDGET: TRANG DASHBOARD ---
+  Widget _buildCustomFAB(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 50),
+      height: 55,
+      width: 220,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Material(
+        color: const Color(0xFFE8EAF6),
+        borderRadius: BorderRadius.circular(30),
+        clipBehavior: Clip.hardEdge,
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: () => _openNoteForm(context),
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(Icons.edit, color: Color(0xFF3F51B5), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        "Thủ công",
+                        style: TextStyle(
+                          color: Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Container(width: 1, height: 30, color: Colors.grey),
+            Expanded(
+              child: InkWell(
+                onTap: () {},
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(Icons.mic, color: Colors.redAccent, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        "Giọng nói",
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- DASHBOARD: CHỈNH SỬA LOGIC HIỂN THỊ ---
   Widget _buildDashboard() {
-    final displayReminders = _reminders.take(4).toList();
-    final displayNotes = _notes.take(4).toList();
+    // 1. Lịch hẹn: Chỉ lấy những cái có hasAppointment = true
+    final appointments = _allNotes.where((n) => n.hasAppointment).toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+
+    // 2. Ghi chú: Lấy TOÀN BỘ (bao gồm cả Lịch hẹn, vì Lịch hẹn cũng là một dạng Ghi chú)
+    // Sắp xếp theo ID giảm dần (mới nhất lên đầu)
+    final allRecentNotes = _allNotes.toList()
+      ..sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionHeader(
-            title: 'Lịch nhắc sắp tới',
-            onTap: () {
-              setState(() {
-                _selectedIndex = 2;
-              });
-            },
+            title: 'Lịch hẹn sắp tới',
+            onTap: () => setState(() => _selectedIndex = 2),
           ),
           const SizedBox(height: 10),
-          _reminders.isEmpty
+          appointments.isEmpty
               ? _buildEmptyState(
-                  "Không có lịch nhắc nào sắp tới",
+                  "Không có lịch hẹn nào",
                   Icons.notifications_off_outlined,
                 )
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: displayReminders.length,
-                  itemBuilder: (context, index) {
-                    final item = displayReminders[index];
-                    return ReminderCard(
-                      title: item['title'],
-                      time: item['time'],
-                      date: item['date'],
-                      isUrgent: item['isUrgent'],
-                      onEdit: () {
-                        _showEditReminderDialog(context, item);
-                      },
-                    );
-                  },
+                  itemCount: appointments.take(3).length,
+                  itemBuilder: (ctx, i) => ReminderCard(
+                    title: appointments[i].title,
+                    content: appointments[i].content,
+                    date: appointments[i].date,
+                    time: appointments[i].time,
+                    onEdit: () =>
+                        _openNoteForm(context, existingNote: appointments[i]),
+                    onDelete: () => _handleDelete(appointments[i].id!),
+                  ),
                 ),
           const SizedBox(height: 25),
           SectionHeader(
             title: 'Ghi chú gần đây',
-            onTap: () {
-              setState(() {
-                _selectedIndex = 0;
-              });
-            },
+            onTap: () => setState(() => _selectedIndex = 0),
           ),
-
           const SizedBox(height: 10),
-          _notes.isEmpty
+          // Bây giờ danh sách này sẽ hiển thị cả Lịch hẹn dưới dạng Card Ghi chú
+          allRecentNotes.isEmpty
               ? _buildEmptyState("Chưa có ghi chú nào", Icons.note_add_outlined)
               : GridView.builder(
                   shrinkWrap: true,
@@ -341,864 +447,110 @@ class _MainScreenState extends State<MainScreen> {
                     crossAxisCount: 2,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
-                    childAspectRatio: 1.1,
                   ),
-                  itemCount: displayNotes.length,
-                  itemBuilder: (context, index) {
-                    final note = displayNotes[index];
-                    return NoteCard(
-                      title: note['title'],
-                      content: note['content'],
-                      tag: note['tag'] ?? 'General',
-                      hasReminder: note['remind'] == 1,
-                      onEdit: () {
-                        _openNoteForm(context, existingNote: note);
-                      },
-                      onDelete: () {
-                        _deleteNote(context, note['id']);
-                      },
-                    );
-                  },
+                  itemCount: allRecentNotes.take(4).length,
+                  itemBuilder: (ctx, i) => NoteCard(
+                    title: allRecentNotes[i].title,
+                    content: allRecentNotes[i].content,
+                    date: allRecentNotes[i].hasAppointment
+                        ? allRecentNotes[i].time
+                        : null,
+                    isLinkedAppointment: allRecentNotes[i].hasAppointment,
+                    onEdit: () =>
+                        _openNoteForm(context, existingNote: allRecentNotes[i]),
+                    onDelete: () => _handleDelete(allRecentNotes[i].id!),
+                  ),
                 ),
+          const SizedBox(height: 80),
         ],
       ),
     );
   }
 
-  // --- WIDGET: TRANG TẤT CẢ GHI CHÚ ---
-  Widget _buildAllNotes() {
+  // --- DANH SÁCH CHUNG: CHỈNH SỬA LOGIC ---
+  Widget _buildAllList({
+    bool filterOnlyNotes = false,
+    bool filterOnlyAppointments = false,
+  }) {
+    List<Note> data = [];
+    String title = "";
+    IconData emptyIcon = Icons.inbox;
+
+    if (filterOnlyAppointments) {
+      // Tab Lịch hẹn: Chỉ hiện cái có giờ
+      data = _allNotes.where((n) => n.hasAppointment).toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+      title = "Tất cả Lịch hẹn";
+      emptyIcon = Icons.notifications_off_outlined;
+    } else {
+      // Tab Ghi chú: HIỆN TẤT CẢ (Lịch hẹn + Ghi chú thường)
+      data = _allNotes.toList()
+        ..sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+      title = "Tất cả Ghi chú";
+      emptyIcon = Icons.note_add_outlined;
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // --- 1. PHẦN TIÊU ĐỀ (LUÔN HIỂN THỊ) ---
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 20, 16, 10),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
           child: Text(
-            "Tất cả Ghi chú",
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
+            title,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
         ),
-
-        // --- 2. PHẦN NỘI DUNG (Thay đổi tùy theo dữ liệu) ---
         Expanded(
-          // Kiểm tra: Nếu rỗng thì hiện EmptyState, ngược lại hiện ListView
-          child: _notes.isEmpty
-              ? _buildEmptyState("Chưa có ghi chú nào", Icons.note_add_outlined)
+          child: data.isEmpty
+              ? _buildEmptyState("Danh sách trống", emptyIcon)
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _notes.length,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                  itemCount: data.length,
                   itemBuilder: (context, index) {
-                    final note = _notes[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: NoteCard(
-                        title: note['title'],
-                        content: note['content'],
-                        tag: note['tag'],
-                        isFullWidth: true,
-                        hasReminder: note['remind'] == 1,
-                        onEdit: () {
-                          _openNoteForm(context, existingNote: note);
-                        },
-                        onDelete: () {
-                          _deleteNote(context, note['id']);
-                        },
-                      ),
-                    );
+                    final note = data[index];
+                    if (filterOnlyAppointments) {
+                      // Giao diện Lịch hẹn
+                      return ReminderCard(
+                        title: note.title,
+                        content: note.content,
+                        date: note.date,
+                        time: note.time,
+                        onEdit: () =>
+                            _openNoteForm(context, existingNote: note),
+                        onDelete: () => _handleDelete(note.id!),
+                      );
+                    } else {
+                      // Giao diện Ghi chú (Dùng cho cả Note thường và Lịch hẹn trong tab này)
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: NoteCard(
+                          title: note.title,
+                          content: note.content,
+                          date: note.hasAppointment ? note.time : null,
+                          isFullWidth: true,
+                          isLinkedAppointment:
+                              note.hasAppointment, // Truyền cờ này vào
+                          onEdit: () =>
+                              _openNoteForm(context, existingNote: note),
+                          onDelete: () => _handleDelete(note.id!),
+                        ),
+                      );
+                    }
                   },
                 ),
         ),
       ],
-    );
-  }
-
-  Widget _buildReminderList() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // --- 1. PHẦN TIÊU ĐỀ (LUÔN HIỂN THỊ) ---
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 20, 16, 10),
-          child: Text(
-            "Tất cả Lịch hẹn",
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-        ),
-
-        // --- 2. PHẦN NỘI DUNG (Thay đổi tùy theo dữ liệu) ---
-        Expanded(
-          // Kiểm tra: Nếu rỗng thì hiện EmptyState, ngược lại hiện ListView
-          child: _reminders.isEmpty
-              ? _buildEmptyState(
-                  "Không có lịch nhắc nào sắp tới",
-                  Icons.notifications_off_outlined,
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16.0),
-                  // Thêm padding dưới cùng để không bị nút Tạo Mới che mất item cuối
-                  // padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 80),
-                  itemCount: _reminders.length,
-                  itemBuilder: (context, index) {
-                    final item = _reminders[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(
-                        bottom: 10.0,
-                      ), // Khoảng cách giữa các card
-                      child: ReminderCard(
-                        title: item['title'],
-                        time: item['time'],
-                        date: item['date'],
-                        isUrgent: item['isUrgent'],
-                        onEdit: () {
-                          _showEditReminderDialog(context, item);
-                        },
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
-  // // --- HÀM: HIỆN FORM THÊM MỚI ---
-  // void _showAddModal(BuildContext context) {
-  //   // Ở đầu hàm _showAddModal
-  //   List<Map<String, dynamic>> _notes = [];
-  //   final TextEditingController _titleController = TextEditingController();
-  //   final TextEditingController _contentController = TextEditingController();
-  //   final TextEditingController _tagController = TextEditingController();
-  //   DateTime? _selectedDate;
-  //   TimeOfDay? _selectedTime;
-
-  //   showModalBottomSheet(
-  //     context: context,
-  //     isScrollControlled: true,
-  //     shape: const RoundedRectangleBorder(
-  //       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-  //     ),
-  //     builder: (context) {
-  //       return SizedBox(
-  //         height: MediaQuery.of(context).size.height * 0.50,
-  //         child: StatefulBuilder(
-  //           builder: (BuildContext context, StateSetter setModalState) {
-  //             return Padding(
-  //               padding: EdgeInsets.only(
-  //                 bottom: MediaQuery.of(context).viewInsets.bottom,
-  //                 top: 20,
-  //                 left: 20,
-  //                 right: 20,
-  //               ),
-  //               child: Column(
-  //                 mainAxisSize: MainAxisSize.min,
-  //                 crossAxisAlignment: CrossAxisAlignment.stretch,
-  //                 children: [
-  //                   const Text(
-  //                     'Tạo ghi chú / Nhắc nhở',
-  //                     style: TextStyle(
-  //                       fontSize: 20,
-  //                       fontWeight: FontWeight.bold,
-  //                     ),
-  //                   ),
-  //                   const SizedBox(height: 15),
-  //                   TextField(
-  //                     controller: _titleController,
-  //                     decoration: InputDecoration(
-  //                       labelText: 'Tiêu đề',
-  //                       border: OutlineInputBorder(
-  //                         borderRadius: BorderRadius.circular(12),
-  //                       ),
-  //                       prefixIcon: const Icon(Icons.title),
-  //                     ),
-  //                   ),
-  //                   const SizedBox(height: 15),
-  //                   Expanded(
-  //                     child: TextField(
-  //                       controller: _contentController,
-  //                       maxLines: null, // Cho phép xuống dòng vô hạn
-  //                       expands:
-  //                           true, // Quan trọng: Bắt nội dung dãn kín khung Expanded
-  //                       textAlignVertical:
-  //                           TextAlignVertical.top, // Gõ chữ từ trên cùng
-  //                       decoration: InputDecoration(
-  //                         labelText: 'Nội dung chi tiết',
-  //                         border: OutlineInputBorder(
-  //                           borderRadius: BorderRadius.circular(12),
-  //                         ),
-  //                         alignLabelWithHint: true,
-  //                       ),
-  //                     ),
-  //                   ),
-  //                   const SizedBox(height: 15),
-  //                   Row(
-  //                     children: [
-  //                       // NÚT CHỌN NGÀY
-  //                       Expanded(
-  //                         child: OutlinedButton.icon(
-  //                           onPressed: () async {
-  //                             final DateTime? picked = await showDatePicker(
-  //                               context: context,
-  //                               initialDate: DateTime.now(),
-  //                               firstDate: DateTime.now(),
-  //                               lastDate: DateTime(2100),
-  //                             );
-  //                             if (picked != null) {
-  //                               // Dùng setModalState để cập nhật text nút bấm
-  //                               setModalState(() {
-  //                                 _selectedDate = picked;
-  //                               });
-  //                             }
-  //                           },
-  //                           icon: const Icon(Icons.calendar_today),
-  //                           // Logic hiển thị: Nếu chưa chọn thì hiện "Chọn ngày", chọn rồi thì hiện ngày tháng
-  //                           label: Text(
-  //                             _selectedDate == null
-  //                                 ? 'Chọn ngày'
-  //                                 : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-  //                             style: TextStyle(
-  //                               color: _selectedDate != null
-  //                                   ? Colors.black
-  //                                   : null,
-  //                               fontWeight: _selectedDate != null
-  //                                   ? FontWeight.bold
-  //                                   : null,
-  //                             ),
-  //                           ),
-  //                         ),
-  //                       ),
-  //                       const SizedBox(width: 10),
-  //                       // NÚT CHỌN GIỜ
-  //                       Expanded(
-  //                         child: OutlinedButton.icon(
-  //                           onPressed: () async {
-  //                             final TimeOfDay? picked = await showTimePicker(
-  //                               context: context,
-  //                               initialTime: TimeOfDay.now(),
-  //                             );
-  //                             if (picked != null) {
-  //                               setModalState(() {
-  //                                 _selectedTime = picked;
-  //                               });
-  //                             }
-  //                           },
-  //                           icon: const Icon(Icons.access_time),
-  //                           // Logic hiển thị giờ phút (thêm số 0 đằng trước nếu nhỏ hơn 10)
-  //                           label: Text(
-  //                             _selectedTime == null
-  //                                 ? 'Chọn giờ'
-  //                                 : '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}',
-  //                             style: TextStyle(
-  //                               color: _selectedTime != null
-  //                                   ? Colors.black
-  //                                   : null,
-  //                               fontWeight: _selectedTime != null
-  //                                   ? FontWeight.bold
-  //                                   : null,
-  //                             ),
-  //                           ),
-  //                         ),
-  //                       ),
-  //                     ],
-  //                   ),
-  //                   const SizedBox(height: 15),
-  //                   SizedBox(
-  //                     width: double.infinity,
-  //                     height: 50,
-  //                     child: FilledButton(
-  //                       onPressed: () async {
-  //                         if (_titleController.text.trim().isEmpty) return;
-
-  //                         // 1. Chuẩn bị dữ liệu
-  //                         bool isRemind = false;
-  //                         DateTime? finalScheduledTime;
-
-  //                         if (_selectedDate != null && _selectedTime != null) {
-  //                           isRemind = true;
-  //                           finalScheduledTime = DateTime(
-  //                             _selectedDate!.year,
-  //                             _selectedDate!.month,
-  //                             _selectedDate!.day,
-  //                             _selectedTime!.hour,
-  //                             _selectedTime!.minute,
-  //                           );
-  //                         }
-
-  //                         // 2. Tạo đối tượng Note (Import từ models.dart)
-  //                         Note newNote = Note(
-  //                           title: _titleController.text,
-  //                           content: _contentController.text,
-  //                           remind: isRemind,
-  //                           tag: _tagController.text.isEmpty
-  //                               ? 'General'
-  //                               : _tagController.text,
-  //                         );
-
-  //                         // 3. GỌI DAO ĐỂ LƯU VÀO SQLITE
-  //                         await _dao.createNote(
-  //                           newNote,
-  //                           scheduledTime: finalScheduledTime,
-  //                         );
-
-  //                         // 4. Load lại dữ liệu để UI cập nhật
-  //                         await _loadDataFromDB();
-
-  //                         // 5. Đóng Modal
-  //                         if (!context.mounted) return;
-  //                         Navigator.pop(context);
-  //                       },
-  //                       child: const Text('Lưu'),
-  //                     ),
-  //                   ),
-  //                   const SizedBox(height: 15),
-  //                 ],
-  //               ),
-  //             );
-  //           },
-  //         ),
-  //       );
-  //     },
-  //   );
-  // }
-
-  void _handleDelete(int id) async {
-    // id này là id của bảng notes.
-    // Nếu item bạn lấy từ list reminders, hãy truyền item['note_id'].
-    // Nếu item bạn lấy từ list notes, hãy truyền item['id'].
-
-    await Dbconnector.instance.deleteItem(id);
-
-    // Refresh UI
-    _loadDataFromDB();
-  }
-
-  // 1. Hàm xóa ghi chú
-  Future<void> _deleteNote(BuildContext ctx, int id) async {
-    bool confirm =
-        await showDialog(
-          context: ctx,
-          builder: (dctx) => AlertDialog(
-            title: const Text("Xác nhận xóa"),
-            content: const Text("Bạn có chắc muốn xóa ghi chú này không?"),
-            actions: [
-              TextButton(
-                child: const Text("Hủy"),
-                onPressed: () => Navigator.pop(dctx, false),
-              ),
-              TextButton(
-                child: const Text("Xóa", style: TextStyle(color: Colors.red)),
-                onPressed: () => Navigator.pop(dctx, true),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-
-    if (confirm) {
-      // Gọi hàm deleteNote từ dbconnector (bạn nhớ cập nhật dbconnector.dart như bài trước nhé)
-      _handleDelete(id);
-      await _loadDataFromDB(); // Load lại dữ liệu
-    }
-  }
-
-  void _handleSave({
-    int? currentId, // null nếu tạo mới, có số nếu sửa
-    required String title,
-    required String content,
-    String? pickedTime, // Chuỗi giờ "14:30 02/01/2026" hoặc null
-  }) async {
-    await Dbconnector.instance.saveNoteOrReminder(
-      id: currentId,
-      title: title,
-      content: content,
-      scheduledTime:
-          pickedTime, // Truyền null nếu user xóa giờ hoặc không chọn giờ
-    );
-
-    // Refresh UI
-    _loadDataFromDB();
-  }
-
-  // 2. Hàm hiện dialog sửa ghi chú (Code bạn vừa gửi)
-  // --- HÀM: HIỆN DIALOG SỬA (GIỮA MÀN HÌNH) ---
-  // void _showEditDialog(
-  //   BuildContext ctx,
-  //   Map<String, dynamic> existingNote,
-  // ) async {
-  //   _titleController.text = existingNote['title'];
-  //   _contentController.text = existingNote['content'];
-
-  //   // 1. Kiểm tra xem Note này có đang bật nhắc nhở không
-  //   bool isRemind = (existingNote['remind'] == 1);
-  //   DateTime? currentScheduledTime;
-
-  //   // 2. Nếu có nhắc nhở, ta cần lấy giờ cụ thể từ DB (vì list notes chưa có thông tin này)
-  //   if (isRemind) {
-  //     final db = await Dbconnector.instance.database;
-  //     final maps = await db.query(
-  //       'reminders',
-  //       columns: ['scheduled_time'],
-  //       where: 'note_id = ?',
-  //       whereArgs: [existingNote['id']],
-  //     );
-  //     if (maps.isNotEmpty) {
-  //       currentScheduledTime = DateTime.parse(
-  //         maps.first['scheduled_time'] as String,
-  //       );
-  //     }
-  //   }
-
-  //   // Biến tạm để lưu giờ/phút khi user chỉnh sửa trên Dialog
-  //   DateTime? tempDate = currentScheduledTime;
-  //   TimeOfDay? tempTime = currentScheduledTime != null
-  //       ? TimeOfDay.fromDateTime(currentScheduledTime)
-  //       : null;
-
-  //   if (!ctx.mounted) return;
-
-  //   showDialog(
-  //     context: ctx,
-  //     builder: (context) {
-  //       // Dùng StatefulBuilder để cập nhật giao diện TRONG Dialog (khi chọn ngày/giờ)
-  //       return StatefulBuilder(
-  //         builder: (context, setStateDialog) {
-  //           return Dialog(
-  //             shape: RoundedRectangleBorder(
-  //               borderRadius: BorderRadius.circular(16),
-  //             ),
-  //             child: Container(
-  //               padding: const EdgeInsets.all(20),
-  //               width:
-  //                   MediaQuery.of(context).size.width *
-  //                   0.9, // Chiếm 90% chiều rộng
-  //               child: SingleChildScrollView(
-  //                 child: Column(
-  //                   mainAxisSize: MainAxisSize.min,
-  //                   crossAxisAlignment: CrossAxisAlignment.start,
-  //                   children: [
-  //                     const Text(
-  //                       "Chỉnh sửa ghi chú",
-  //                       style: TextStyle(
-  //                         fontSize: 20,
-  //                         fontWeight: FontWeight.bold,
-  //                       ),
-  //                     ),
-  //                     const SizedBox(height: 20),
-
-  //                     // --- TIÊU ĐỀ ---
-  //                     TextField(
-  //                       controller: _titleController,
-  //                       decoration: const InputDecoration(
-  //                         labelText: 'Tiêu đề',
-  //                         border: OutlineInputBorder(),
-  //                         contentPadding: EdgeInsets.symmetric(
-  //                           horizontal: 12,
-  //                           vertical: 12,
-  //                         ),
-  //                       ),
-  //                     ),
-  //                     const SizedBox(height: 15),
-
-  //                     // --- NỘI DUNG ---
-  //                     TextField(
-  //                       controller: _contentController,
-  //                       decoration: const InputDecoration(
-  //                         labelText: 'Nội dung',
-  //                         border: OutlineInputBorder(),
-  //                       ),
-  //                       maxLines: 5,
-  //                       minLines: 2,
-  //                     ),
-  //                     const SizedBox(height: 15),
-
-  //                     // --- LOGIC HIỂN THỊ NGÀY GIỜ ---
-  //                     // Chỉ hiển thị nếu Note gốc có lịch hẹn (isRemind == true)
-  //                     if (isRemind) ...[
-  //                       Row(
-  //                         children: [
-  //                           // Nút chọn NGÀY
-  //                           Expanded(
-  //                             child: OutlinedButton.icon(
-  //                               onPressed: () async {
-  //                                 final picked = await showDatePicker(
-  //                                   context: context,
-  //                                   initialDate: tempDate ?? DateTime.now(),
-  //                                   firstDate: DateTime.now(),
-  //                                   lastDate: DateTime(2100),
-  //                                 );
-  //                                 if (picked != null) {
-  //                                   setStateDialog(() => tempDate = picked);
-  //                                 }
-  //                               },
-  //                               icon: const Icon(
-  //                                 Icons.calendar_today,
-  //                                 size: 18,
-  //                               ),
-  //                               label: Text(
-  //                                 tempDate == null
-  //                                     ? "Ngày"
-  //                                     : "${tempDate!.day}/${tempDate!.month}/${tempDate!.year}",
-  //                                 style: const TextStyle(fontSize: 13),
-  //                               ),
-  //                             ),
-  //                           ),
-  //                           const SizedBox(width: 8),
-  //                           // Nút chọn GIỜ
-  //                           Expanded(
-  //                             child: OutlinedButton.icon(
-  //                               onPressed: () async {
-  //                                 final picked = await showTimePicker(
-  //                                   context: context,
-  //                                   initialTime: tempTime ?? TimeOfDay.now(),
-  //                                 );
-  //                                 if (picked != null) {
-  //                                   setStateDialog(() => tempTime = picked);
-  //                                 }
-  //                               },
-  //                               icon: const Icon(Icons.access_time, size: 18),
-  //                               label: Text(
-  //                                 tempTime == null
-  //                                     ? "Giờ"
-  //                                     : "${tempTime!.hour}:${tempTime!.minute.toString().padLeft(2, '0')}",
-  //                                 style: const TextStyle(fontSize: 13),
-  //                               ),
-  //                             ),
-  //                           ),
-  //                         ],
-  //                       ),
-  //                       const SizedBox(height: 20),
-  //                     ],
-
-  //                     // --- CÁC NÚT ACTION ---
-  //                     Row(
-  //                       mainAxisAlignment: MainAxisAlignment.end,
-  //                       children: [
-  //                         TextButton(
-  //                           onPressed: () => Navigator.pop(context),
-  //                           child: const Text(
-  //                             "Hủy",
-  //                             style: TextStyle(color: Colors.grey),
-  //                           ),
-  //                         ),
-  //                         const SizedBox(width: 10),
-  //                         FilledButton(
-  //                           onPressed: () async {
-  //                             // Xử lý logic thời gian
-  //                             DateTime? finalDateTime;
-
-  //                             // Nếu đang ở chế độ có nhắc nhở, ta gộp ngày + giờ
-  //                             if (isRemind &&
-  //                                 tempDate != null &&
-  //                                 tempTime != null) {
-  //                               finalDateTime = DateTime(
-  //                                 tempDate!.year,
-  //                                 tempDate!.month,
-  //                                 tempDate!.day,
-  //                                 tempTime!.hour,
-  //                                 tempTime!.minute,
-  //                               );
-  //                             }
-
-  //                             // Gọi hàm save chung
-  //                             _handleSave(
-  //                               currentId: existingNote['id'],
-  //                               title: _titleController.text,
-  //                               content: _contentController.text,
-  //                               // Nếu isRemind = false hoặc chưa chọn giờ -> finalDateTime là null -> DAO sẽ xóa reminder
-  //                               pickedTime: finalDateTime?.toString(),
-  //                             );
-
-  //                             // Đóng dialog
-  //                             Navigator.pop(context);
-  //                           },
-  //                           child: const Text("Cập nhật"),
-  //                         ),
-  //                       ],
-  //                     ),
-  //                   ],
-  //                 ),
-  //               ),
-  //             ),
-  //           );
-  //         },
-  //       );
-  //     },
-  //   );
-  // }
-
-  // --- HÀM MỞ FORM CHUNG CHO CẢ TẠO MỚI VÀ SỬA ---
-  void _openNoteForm(
-    BuildContext context, {
-    Map<String, dynamic>? existingNote,
-  }) async {
-    DateTime? initialDate;
-
-    // A. NẾU LÀ SỬA (existingNote != null)
-    if (existingNote != null) {
-      // Kiểm tra xem note này có nhắc nhở không để lấy giờ hiển thị
-      if (existingNote['remind'] == 1) {
-        // Query lấy giờ từ bảng reminders
-        // (Lưu ý: Nếu item từ Dashboard đã có sẵn 'full_date' thì dùng luôn, đỡ phải query)
-        if (existingNote.containsKey('full_date') &&
-            existingNote['full_date'] != null) {
-          initialDate = existingNote['full_date'];
-        } else {
-          // Nếu click từ danh sách Ghi chú (chưa có giờ), phải query DB
-          final db = await Dbconnector.instance.database;
-          final maps = await db.query(
-            'reminders',
-            columns: ['scheduled_time'],
-            where: 'note_id = ?',
-            whereArgs: [existingNote['id']],
-          );
-          if (maps.isNotEmpty) {
-            initialDate = DateTime.parse(
-              maps.first['scheduled_time'] as String,
-            );
-          }
-        }
-      }
-    }
-
-    if (!context.mounted) return;
-
-    // B. HIỂN THỊ DIALOG
-    showDialog(
-      context: context,
-      builder: (context) {
-        return NoteFormDialog(
-          noteData: existingNote, // Truyền dữ liệu cũ vào (nếu có)
-          initialDate: initialDate, // Truyền giờ cũ vào (nếu có)
-          // C. XỬ LÝ KHI ẤN NÚT LƯU
-          onSubmit: (title, content, pickedTime) async {
-            if (title.trim().isEmpty) return;
-
-            if (existingNote == null) {
-              // --- LOGIC TẠO MỚI ---
-              Note newNote = Note(
-                title: title,
-                content: content,
-                remind: pickedTime != null, // Có giờ => True
-                tag: 'General',
-              );
-              await _dao.createNote(newNote, scheduledTime: pickedTime);
-            } else {
-              // --- LOGIC CẬP NHẬT ---
-              await _dao.updateNoteOrReminder(
-                id:
-                    existingNote['id'] ??
-                    existingNote['note_id'], // ID của Note
-                title: title,
-                content: content,
-                scheduledTime: pickedTime, // Nếu null => DAO sẽ xoá reminder
-              );
-            }
-
-            // Refresh UI
-            await _loadDataFromDB();
-          },
-        );
-      },
-    );
-  }
-
-  void _showEditReminderDialog(
-    BuildContext context,
-    Map<String, dynamic> item,
-  ) {
-    final TextEditingController titleCtrl = TextEditingController(
-      text: item['title'],
-    );
-    final TextEditingController contentCtrl = TextEditingController(
-      text: item['content'],
-    );
-
-    // Lấy DateTime gốc từ item (đã lưu ở bước _loadDataFromDB) hoặc parse lại
-    DateTime? tempDate = item['full_date'] as DateTime?;
-    TimeOfDay? tempTime = tempDate != null
-        ? TimeOfDay.fromDateTime(tempDate)
-        : TimeOfDay.now();
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "Chỉnh sửa Nhắc nhở",
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-
-                      TextField(
-                        controller: titleCtrl,
-                        decoration: const InputDecoration(
-                          labelText: "Tiêu đề",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-
-                      // ... (Phần chọn ngày giờ giữ nguyên như code cũ của bạn) ...
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                final picked = await showDatePicker(
-                                  context: context,
-                                  initialDate: tempDate ?? DateTime.now(),
-                                  firstDate: DateTime.now(),
-                                  lastDate: DateTime(2100),
-                                );
-                                if (picked != null)
-                                  setStateDialog(() => tempDate = picked);
-                              },
-                              icon: const Icon(Icons.calendar_today),
-                              label: Text(
-                                tempDate == null
-                                    ? "Chọn ngày"
-                                    : "${tempDate!.day}/${tempDate!.month}",
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                final picked = await showTimePicker(
-                                  context: context,
-                                  initialTime: tempTime ?? TimeOfDay.now(),
-                                );
-                                if (picked != null)
-                                  setStateDialog(() => tempTime = picked);
-                              },
-                              icon: const Icon(Icons.access_time),
-                              label: Text(
-                                tempTime == null
-                                    ? "Chọn giờ"
-                                    : "${tempTime!.hour}:${tempTime!.minute.toString().padLeft(2, '0')}",
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 25),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text(
-                              "Hủy",
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-
-                          // --- NÚT XÓA ---
-                          TextButton.icon(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.redAccent,
-                            ),
-                            label: const Text(
-                              "Xóa Note",
-                              style: TextStyle(color: Colors.redAccent),
-                            ),
-                            onPressed: () async {
-                              // Xóa toàn bộ Note và Reminder liên quan
-                              await _dao.deleteNote(item['note_id']);
-
-                              // Load lại UI và đóng dialog
-                              await _loadDataFromDB();
-                              if (context.mounted) Navigator.pop(context);
-                            },
-                          ),
-
-                          // --- NÚT LƯU ---
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF3F51B5),
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text("Lưu"),
-                            onPressed: () async {
-                              // 1. Tổng hợp thời gian
-                              DateTime? finalDateTime;
-                              if (tempDate != null && tempTime != null) {
-                                finalDateTime = DateTime(
-                                  tempDate!.year,
-                                  tempDate!.month,
-                                  tempDate!.day,
-                                  tempTime!.hour,
-                                  tempTime!.minute,
-                                );
-                              }
-
-                              // 2. Gọi DAO để cập nhật
-                              // Lưu ý: item['note_id'] là ID của Note gốc
-                              await _dao.updateNoteOrReminder(
-                                id: item['note_id'],
-                                title: titleCtrl.text,
-                                content: contentCtrl.text,
-                                scheduledTime:
-                                    finalDateTime, // Truyền DateTime mới (hoặc null nếu muốn gỡ nhắc nhở)
-                              );
-
-                              // 3. Refresh UI
-                              await _loadDataFromDB();
-                              if (context.mounted) Navigator.pop(context);
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 
   Widget _buildEmptyState(String message, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        vertical: 30,
-      ), // Khoảng cách trên dưới
-      alignment: Alignment.center,
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 50, color: Colors.grey.shade400),
+          Icon(icon, size: 50, color: Colors.grey.shade300),
           const SizedBox(height: 10),
-          Text(
-            message,
-            style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
-          ),
+          Text(message, style: TextStyle(color: Colors.grey.shade500)),
         ],
       ),
     );
@@ -1206,167 +558,239 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 class NoteFormDialog extends StatefulWidget {
-  final Map<String, dynamic>? noteData; // Null = Tạo mới, Có dữ liệu = Sửa
-  final DateTime? initialDate; // Giờ hẹn hiện tại (nếu có)
-  final Function(String title, String content, DateTime? time) onSubmit;
-
-  const NoteFormDialog({
-    super.key,
-    this.noteData,
-    this.initialDate,
-    required this.onSubmit,
-  });
+  final Note? noteData;
+  final Function(
+    String title,
+    String content,
+    DateTime? scheduledTime,
+    String? audioPath,
+  )
+  onSubmit;
+  const NoteFormDialog({super.key, this.noteData, required this.onSubmit});
 
   @override
   State<NoteFormDialog> createState() => _NoteFormDialogState();
 }
 
 class _NoteFormDialogState extends State<NoteFormDialog> {
-  late TextEditingController _titleController;
-  late TextEditingController _contentController;
+  late TextEditingController _titleCtrl;
+  late TextEditingController _contentCtrl;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  String? _selectedAudioPath;
 
   @override
   void initState() {
     super.initState();
-    // 1. Điền dữ liệu cũ nếu đang ở chế độ Sửa
-    _titleController = TextEditingController(
-      text: widget.noteData?['title'] ?? '',
-    );
-    _contentController = TextEditingController(
-      text: widget.noteData?['content'] ?? '',
-    );
-
-    // 2. Điền ngày giờ cũ nếu có
-    if (widget.initialDate != null) {
-      _selectedDate = widget.initialDate;
-      _selectedTime = TimeOfDay.fromDateTime(widget.initialDate!);
+    _titleCtrl = TextEditingController(text: widget.noteData?.title ?? '');
+    _contentCtrl = TextEditingController(text: widget.noteData?.content ?? '');
+    if (widget.noteData != null && widget.noteData!.hasAppointment) {
+      _selectedDate = widget.noteData!.date;
+      _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
+      _selectedAudioPath = widget.noteData?.alarmAudioPath;
     }
+  }
+
+  String _getAudioDisplayName() {
+    if (_selectedAudioPath == null) {
+      return "Mặc định hệ thống";
+    }
+    return _selectedAudioPath!.split('/').last;
   }
 
   @override
   Widget build(BuildContext context) {
-    // Lấy kích thước màn hình để chỉnh độ rộng Dialog
-    final size = MediaQuery.of(context).size;
-
+    bool showMusicOption = _selectedDate != null && _selectedTime != null;
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      backgroundColor: Colors.white,
       child: Container(
-        width: size.width * 0.9, // Chiếm 90% chiều rộng màn hình
         padding: const EdgeInsets.all(20),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --- TIÊU ĐỀ FORM ---
               Text(
-                widget.noteData == null
-                    ? "Tạo ghi chú / Nhắc nhở"
-                    : "Chỉnh sửa ghi chú",
+                widget.noteData == null ? "Tạo mới" : "Chỉnh sửa",
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 20),
-
-              // --- INPUT TIÊU ĐỀ ---
               TextField(
-                controller: _titleController,
+                controller: _titleCtrl,
                 decoration: InputDecoration(
                   labelText: 'Tiêu đề',
-                  prefixIcon: const Icon(Icons.title_outlined),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
+                  prefixIcon: const Icon(Icons.title),
+                ),
+              ),
+              const SizedBox(height: 15),
+              TextField(
+                controller: _contentCtrl,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Nội dung',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
               const SizedBox(height: 15),
-
-              // --- INPUT NỘI DUNG ---
-              Container(
-                constraints: BoxConstraints(
-                  maxHeight: size.height * 0.3,
-                ), // Giới hạn chiều cao
-                child: TextField(
-                  controller: _contentController,
-                  maxLines: null, // Cho phép xuống dòng thoải mái
-                  decoration: InputDecoration(
-                    labelText: 'Nội dung chi tiết',
-                    alignLabelWithHint: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  "Đặt lịch hẹn (Tùy chọn):",
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-              const SizedBox(height: 15),
-
-              // --- CHỌN NGÀY GIỜ ---
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
+                      icon: const Icon(Icons.calendar_today, size: 16),
+                      label: Text(
+                        _selectedDate == null
+                            ? "Chọn ngày"
+                            : "${_selectedDate!.day}/${_selectedDate!.month}",
+                      ),
                       onPressed: () async {
-                        final picked = await showDatePicker(
+                        final d = await showDatePicker(
                           context: context,
                           initialDate: _selectedDate ?? DateTime.now(),
                           firstDate: DateTime.now(),
                           lastDate: DateTime(2100),
                         );
-                        if (picked != null)
-                          setState(() => _selectedDate = picked);
+                        if (d != null) setState(() => _selectedDate = d);
                       },
-                      icon: const Icon(Icons.calendar_today, size: 18),
-                      label: Text(
-                        _selectedDate == null
-                            ? "Chọn ngày"
-                            : "${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}",
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedTime ?? TimeOfDay.now(),
-                        );
-                        if (picked != null)
-                          setState(() => _selectedTime = picked);
-                      },
-                      icon: const Icon(Icons.access_time, size: 18),
+                      icon: const Icon(Icons.access_time, size: 16),
                       label: Text(
                         _selectedTime == null
                             ? "Chọn giờ"
                             : "${_selectedTime!.hour}:${_selectedTime!.minute.toString().padLeft(2, '0')}",
-                        overflow: TextOverflow.ellipsis,
                       ),
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: context,
+                          initialTime: _selectedTime ?? TimeOfDay.now(),
+                        );
+                        if (t != null) setState(() => _selectedTime = t);
+                      },
                     ),
                   ),
+                  if (_selectedDate != null || _selectedTime != null)
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.red),
+                      onPressed: () => setState(() {
+                        _selectedDate = null;
+                        _selectedTime = null;
+                        _selectedAudioPath = null;
+                      }),
+                    ),
                 ],
               ),
-              const SizedBox(height: 25),
-
-              // --- NÚT ACTION ---
+              if (showMusicOption) ...[
+                const SizedBox(height: 15),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.music_note, color: Colors.blue),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Âm thanh báo thức:",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              _getAudioDisplayName(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blueAccent,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          final String? newPath = await AudioService()
+                              .pickAudioFile();
+                          if (newPath != null) {
+                            setState(() {
+                              _selectedAudioPath = newPath;
+                            });
+                          }
+                        },
+                        child: const Text("Đổi nhạc"),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              // if (_selectedDate != null || _selectedTime != null) ...[
+              //   const SizedBox(height: 10),
+              //   ListTile(
+              //     contentPadding: EdgeInsets.zero,
+              //     leading: const Icon(Icons.music_note, color: Colors.blue),
+              //     title: Text(
+              //       _selectedAudioPath == null
+              //           ? "Nhạc mặc định"
+              //           : _selectedAudioPath!.split('/').last,
+              //       style: const TextStyle(fontSize: 14),
+              //     ),
+              //     trailing: TextButton(
+              //       onPressed: () async {
+              //         final String? newPath = await AudioService()
+              //             .pickAudioFile();
+              //         if (newPath != null) {
+              //           setState(() {
+              //             _selectedAudioPath = newPath;
+              //           });
+              //         }
+              //       },
+              //       child: const Text("Đổi nhạc"),
+              //     ),
+              //   ),
+              // ],
+              const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 height: 50,
                 child: FilledButton(
+                  child: const Text("Lưu"),
                   onPressed: () {
-                    // 1. Gộp ngày giờ lại (nếu có chọn)
-                    DateTime? finalDate;
+                    if (_titleCtrl.text.trim().isEmpty) return;
+                    DateTime? finalDT;
                     if (_selectedDate != null && _selectedTime != null) {
-                      finalDate = DateTime(
+                      finalDT = DateTime(
                         _selectedDate!.year,
                         _selectedDate!.month,
                         _selectedDate!.day,
@@ -1374,22 +798,14 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                         _selectedTime!.minute,
                       );
                     }
-
-                    // 2. Trả dữ liệu về cho hàm gọi
                     widget.onSubmit(
-                      _titleController.text,
-                      _contentController.text,
-                      finalDate,
+                      _titleCtrl.text,
+                      _contentCtrl.text,
+                      finalDT,
+                      _selectedAudioPath,
                     );
-                    Navigator.pop(context); // Đóng Dialog
+                    Navigator.pop(context);
                   },
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF3F51B5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(widget.noteData == null ? "Lưu" : "Cập nhật"),
                 ),
               ),
             ],
@@ -1400,54 +816,38 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
   }
 }
 
-// --- CUSTOM WIDGETS ---
+// ==========================================
+//          CUSTOM CARDS
+// ==========================================
 class SectionHeader extends StatelessWidget {
   final String title;
   final VoidCallback onTap;
   const SectionHeader({super.key, required this.title, required this.onTap});
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-          TextButton(
-            onPressed: onTap,
-            child: const Text(
-              'Xem tất cả',
-              style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
       ),
-    );
-  }
+      TextButton(onPressed: onTap, child: const Text('Xem tất cả')),
+    ],
+  );
 }
 
 class ReminderCard extends StatelessWidget {
-  final String title;
-  final String time;
-  final String date;
-  final bool isUrgent;
-  final VoidCallback? onEdit;
-
+  final String title, content;
+  final DateTime date, time;
+  final VoidCallback? onEdit, onDelete;
   const ReminderCard({
     super.key,
     required this.title,
-    required this.time,
+    required this.content,
     required this.date,
-    this.isUrgent = false,
+    required this.time,
     this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -1465,20 +865,44 @@ class ReminderCard extends StatelessWidget {
         leading: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: isUrgent ? Colors.red.shade50 : Colors.blue.shade50,
+            color: Colors.red.shade50,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(Icons.alarm, color: isUrgent ? Colors.red : Colors.blue),
+          child: const Icon(Icons.alarm, color: Colors.red),
         ),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('$date • $time'),
-        trailing: InkWell(
-          onTap: onEdit, // <--- Gán hàm onEdit vào đây
-          borderRadius: BorderRadius.circular(20), // Hiệu ứng bo tròn khi nhấn
-          child: const Padding(
-            padding: EdgeInsets.all(8.0), // Tăng vùng bấm cho dễ thao tác
-            child: Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
-          ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "${date.day}/${date.month} • ${time.hour}:${time.minute.toString().padLeft(2, '0')}",
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.blue,
+              ),
+            ),
+            if (content.isNotEmpty)
+              Text(content, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onEdit != null)
+              IconButton(
+                icon: const Icon(Icons.edit, size: 20, color: Colors.orange),
+                onPressed: onEdit,
+              ),
+            if (onDelete != null)
+              IconButton(
+                icon: const Icon(
+                  Icons.delete,
+                  size: 20,
+                  color: Colors.redAccent,
+                ),
+                onPressed: onDelete,
+              ),
+          ],
         ),
       ),
     );
@@ -1486,151 +910,139 @@ class ReminderCard extends StatelessWidget {
 }
 
 class NoteCard extends StatelessWidget {
-  final String title;
-  final String content;
-  final String tag;
+  final String title, content;
+  final DateTime? date; // 1. Thêm biến ngày giờ (có thể null)
   final bool isFullWidth;
-  final bool hasReminder;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
+  final bool isLinkedAppointment;
+  final VoidCallback? onEdit, onDelete;
 
   const NoteCard({
     super.key,
     required this.title,
     required this.content,
-    required this.tag,
+    this.date, // 2. Thêm vào constructor
     this.isFullWidth = false,
-    this.hasReminder = false,
+    this.isLinkedAppointment = false,
     this.onEdit,
     this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Helper để format giờ cho đẹp (VD: 09:05)
+    String timeStr = "";
+    if (date != null) {
+      final hour = date!.hour.toString().padLeft(2, '0');
+      final minute = date!.minute.toString().padLeft(2, '0');
+      timeStr = "$hour:$minute ${date!.day}/${date!.month}";
+    }
+
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
       color: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // --- Hàng 1: Tag và Các nút chức năng ---
+            // --- HÀNG TRÊN CÙNG: Badge + Ngày giờ + Nút bấm ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Tag hiển thị bên trái
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        tag,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
-                        ),
-                      ),
-                    ),
-                    if (hasReminder)
+                // Cụm bên trái: Badge + Ngày giờ
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Badge (Note/Có hẹn)
                       Container(
-                        margin: const EdgeInsets.only(left: 8),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
+                          horizontal: 8,
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
+                          color: isLinkedAppointment
+                              ? Colors.orange.shade50
+                              : Colors.blue.shade50,
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.orange.shade100),
                         ),
-                        child: Row(
-                          children: const [
-                            Icon(
-                              Icons.alarm,
-                              size: 12,
-                              color: Colors.deepOrange,
+                        child: Text(
+                          isLinkedAppointment ? "Có hẹn" : "Note",
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: isLinkedAppointment
+                                ? Colors.deepOrange
+                                : Colors.blue,
+                          ),
+                        ),
+                      ),
+
+                      // Hiển thị Ngày giờ (Nếu có)
+                      if (date != null) ...[
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.access_time,
+                          size: 12,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        // Dùng Flexible để text không bị tràn nếu quá dài
+                        Flexible(
+                          child: Text(
+                            timeStr,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
                             ),
-                            SizedBox(width: 4),
-                            Text(
-                              "Có hẹn",
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.deepOrange,
-                              ),
-                            ),
-                          ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                // Cụm bên phải: Nút Sửa/Xóa
+                Row(
+                  children: [
+                    if (onEdit != null)
+                      InkWell(
+                        onTap: onEdit,
+                        child: const Icon(
+                          Icons.edit,
+                          size: 18,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    const SizedBox(width: 8),
+                    if (onDelete != null)
+                      InkWell(
+                        onTap: onDelete,
+                        child: const Icon(
+                          Icons.delete,
+                          size: 18,
+                          color: Colors.red,
                         ),
                       ),
                   ],
                 ),
-                // 👇 ĐÂY LÀ PHẦN HIỂN THỊ NÚT SỬA/XÓA 👇
-                // Kiểm tra: Nếu có truyền hàm vào thì mới hiện nút
-                if (onEdit != null || onDelete != null)
-                  Row(
-                    children: [
-                      // Nút Sửa
-                      InkWell(
-                        onTap: onEdit,
-                        borderRadius: BorderRadius.circular(12),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6.0),
-                          child: Icon(
-                            Icons.edit,
-                            size: 20,
-                            color: Colors.orange,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      // Nút Xóa
-                      InkWell(
-                        onTap: onDelete,
-                        borderRadius: BorderRadius.circular(12),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6.0),
-                          child: Icon(
-                            Icons.delete,
-                            size: 20,
-                            color: Colors.red,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
               ],
             ),
-
             const SizedBox(height: 12),
 
-            // --- Hàng 2: Tiêu đề ---
+            // --- TIÊU ĐỀ ---
             Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: Colors.black87,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-
-            // --- Hàng 3: Nội dung ---
             const SizedBox(height: 6),
+
+            // --- NỘI DUNG ---
             Text(
               content,
               maxLines: isFullWidth ? 3 : 5,
