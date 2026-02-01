@@ -1,61 +1,51 @@
-abstract class BaseModel {
+class Note {
   int? id;
-  DateTime createdDate;
-  bool active;
-
-  BaseModel({this.id, DateTime? createdDate, this.active = true})
-    : createdDate = createdDate ?? DateTime.now();
-
-  Map<String, dynamic> toBaseMap() {
-    return {
-      'id': id,
-      'created_date': createdDate.toIso8601String(),
-      'active': active ? 1 : 0,
-    };
-  }
-}
-
-class Note extends BaseModel {
   String title;
   String content;
-  bool remind;
-  String tag;
+  DateTime date;
+  DateTime time;
+  bool hasAppointment;
+  String? alarmAudioPath;
 
   Note({
-    super.id,
-    super.createdDate,
-    super.active,
+    this.id,
     required this.title,
     required this.content,
-    this.remind = false,
-    this.tag = 'General',
-  });
-
-  Map<String, dynamic> toMap() {
-    var map = toBaseMap();
-    map.addAll({'title': title, 'content': content, 'remind': remind ? 1 : 0, 'tag': tag,});
-    return map;
+    required this.date,
+    required this.time,
+    this.hasAppointment = true,
+    this.alarmAudioPath,
+  }) {
+    time = DateTime(
+      time.year,
+      time.month,
+      time.day,
+      time.hour,
+      time.minute,
+    );
   }
-}
-
-class Reminder extends BaseModel {
-  int noteId;
-  DateTime scheduledTime;
-
-  Reminder({
-    super.id,
-    super.createdDate,
-    super.active,
-    required this.noteId,
-    required this.scheduledTime,
-  });
 
   Map<String, dynamic> toMap() {
-    var map = toBaseMap();
-    map.addAll({
-      'note_id': noteId,
-      'scheduled_time': scheduledTime.toIso8601String(),
-    });
-    return map;
+    return {
+      'id': id,
+      'title': title,
+      'content': content,
+      'date': date.toIso8601String(),
+      'time': time.toIso8601String(),
+      'has_appointment': hasAppointment ? 1 : 0,
+      'alarm_audio_path': alarmAudioPath,
+    };
+  }
+
+  factory Note.fromMap(Map<String, dynamic> map) {
+    return Note(
+      id: map['id'],
+      title: map['title'],
+      content: map['content'],
+      date: DateTime.parse(map['date']),
+      time: DateTime.parse(map['time']),
+      hasAppointment: map['has_appointment'] == 1,
+      alarmAudioPath: map['alarm_audio_path'],
+    );
   }
 }
