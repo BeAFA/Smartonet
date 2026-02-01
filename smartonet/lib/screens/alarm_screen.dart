@@ -64,30 +64,22 @@ class _AlarmScreenState extends State<AlarmScreen>
   }
 
   Future<void> _handleStop() async {
-    final navigator = Navigator.of(context);
-    navigator.pop(true);
     try {
       await Alarm.stop(widget.alarmSettings.id);
-      await Future.delayed(const Duration(milliseconds: 400));
     } catch (e) {
       debugPrint("Lỗi khi dừng báo thức: $e");
     }
+
+    if (mounted) Navigator.pop(context, true);
   }
 
   Future<void> _handleSnooze() async {
     final navigator = Navigator.of(context);
 
     if (_currentNote == null) {
-      navigator.pop(true);
       await Alarm.stop(widget.alarmSettings.id);
+      if (mounted) Navigator.pop(context, true);
       return;
-    }
-
-    try {
-      await Alarm.stop(widget.alarmSettings.id);
-      await Future.delayed(const Duration(milliseconds: 500));
-    } catch (e) {
-      debugPrint("Snooze: Lỗi dừng báo thức cũ: $e");
     }
 
     DateTime newTime = DateTime.now().add(const Duration(minutes: 5));
@@ -98,6 +90,7 @@ class _AlarmScreenState extends State<AlarmScreen>
     } catch (e) {
       debugPrint("Lỗi check conflict: $e");
     }
+
     if (isConflict) {
       if (!mounted) return;
       showDialog(
@@ -121,11 +114,9 @@ class _AlarmScreenState extends State<AlarmScreen>
       return;
     }
 
-    navigator.pop(true);
-
     try {
       await Alarm.stop(widget.alarmSettings.id);
-      await Future.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 500));
       setState(() {
         _currentNote!.time = newTime;
         _currentNote!.date = newTime;
@@ -138,6 +129,8 @@ class _AlarmScreenState extends State<AlarmScreen>
     } catch (e) {
       debugPrint("Lỗi khi lưu snooze: $e");
     }
+
+    if (mounted) Navigator.pop(context, true);
   }
 
   @override
