@@ -1,5 +1,4 @@
 import 'package:alarm/alarm.dart';
-import 'package:flutter/material.dart';
 import '../database/models.dart';
 import 'dart:async';
 import 'dart:io';
@@ -29,12 +28,6 @@ class AppointmentService {
       if (fileExists) {
         audioPath = note.alarmAudioPath!;
       }
-    }
-
-    try {
-      await Alarm.stop(note.id!);
-    } catch (e) {
-      debugPrint("Lỗi dừng báo thức cũ, có thể là lần đầu đặt: $e");
     }
 
     await Future.delayed(const Duration(milliseconds: 300));
