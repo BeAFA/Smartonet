@@ -25,7 +25,9 @@ class _AlarmScreenState extends State<AlarmScreen>
   @override
   void initState() {
     super.initState();
-    _loadNoteData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadNoteData();
+    });
 
     _controller = AnimationController(
       duration: const Duration(seconds: 2),
@@ -45,34 +47,57 @@ class _AlarmScreenState extends State<AlarmScreen>
   }
 
   Future<void> _loadNoteData() async {
-    final note = await DbConnector.instance.getNoteById(
-      widget.alarmSettings.id,
-    );
-    setState(() {
-      _currentNote = note;
-      _isLoading = false;
-    });
+    try {
+      final note = await DbConnector.instance.getNoteById(
+        widget.alarmSettings.id,
+      );
+      if (mounted) {
+        setState(() {
+          _currentNote = note;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Lỗi tải dữ liệu ghi chú: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _handleStop() async {
-    await Alarm.stop(widget.alarmSettings.id);
-    if (mounted) Navigator.pop(context, true);
+    final navigator = Navigator.of(context);
+    navigator.pop(true);
+    try {
+      await Alarm.stop(widget.alarmSettings.id);
+      await Future.delayed(const Duration(milliseconds: 400));
+    } catch (e) {
+      debugPrint("Lỗi khi dừng báo thức: $e");
+    }
   }
 
   Future<void> _handleSnooze() async {
-    if (_currentNote == null) return;
+    final navigator = Navigator.of(context);
 
-    DateTime now = DateTime.now();
-    DateTime newTime = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      now.hour,
-      now.minute,
-    ).add(const Duration(minutes: 5));
+    if (_currentNote == null) {
+      navigator.pop(true);
+      await Alarm.stop(widget.alarmSettings.id);
+      return;
+    }
 
-    bool isConflict = await DbConnector.instance.checkConflict(newTime);
+    try {
+      await Alarm.stop(widget.alarmSettings.id);
+      await Future.delayed(const Duration(milliseconds: 500));
+    } catch (e) {
+      debugPrint("Snooze: Lỗi dừng báo thức cũ: $e");
+    }
 
+    DateTime newTime = DateTime.now().add(const Duration(minutes: 5));
+
+    bool isConflict = false;
+    try {
+      isConflict = await DbConnector.instance.checkConflict(newTime);
+    } catch (e) {
+      debugPrint("Lỗi check conflict: $e");
+    }
     if (isConflict) {
       if (!mounted) return;
       showDialog(
@@ -84,7 +109,10 @@ class _AlarmScreenState extends State<AlarmScreen>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context, true);
+              },
               child: const Text("Đóng"),
             ),
           ],
@@ -93,19 +121,22 @@ class _AlarmScreenState extends State<AlarmScreen>
       return;
     }
 
-    await Alarm.stop(widget.alarmSettings.id);
+    navigator.pop(true);
 
-    setState(() {
-      _currentNote!.time = newTime;
-      _currentNote!.date = newTime;
-      _currentNote!.hasAppointment = true;
-    });
+    try {
+      await Alarm.stop(widget.alarmSettings.id);
+      await Future.delayed(const Duration(milliseconds: 300));
+      setState(() {
+        _currentNote!.time = newTime;
+        _currentNote!.date = newTime;
+        _currentNote!.hasAppointment = true;
+      });
 
-    await DbConnector.instance.saveNote(_currentNote!);
-    await AppointmentService.scheduleAppointment(_currentNote!);
+      await DbConnector.instance.saveNote(_currentNote!);
 
-    if (mounted) {
-      Navigator.pop(context, true);
+      await AppointmentService.scheduleAppointment(_currentNote!);
+    } catch (e) {
+      debugPrint("Lỗi khi lưu snooze: $e");
     }
   }
 
@@ -117,10 +148,7 @@ class _AlarmScreenState extends State<AlarmScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF2563EB),
-              Color(0xFF1E40AF),
-            ],
+            colors: [Color(0xFF2563EB), Color(0xFF1E40AF)],
           ),
         ),
         child: SafeArea(
