@@ -74,7 +74,6 @@ class _AlarmScreenState extends State<AlarmScreen>
   }
 
   Future<void> _handleSnooze() async {
-    final navigator = Navigator.of(context);
 
     if (_currentNote == null) {
       await Alarm.stop(widget.alarmSettings.id);
