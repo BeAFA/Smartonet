@@ -15,8 +15,6 @@ class _PermissionScreenState extends State<PermissionScreen>
     with WidgetsBindingObserver {
   bool _isNotificationGranted = false;
   bool _isAlarmGranted = false;
-  bool _isBatteryOptimized = false;
-  bool _isSystemAlertWindowGranted = false;
 
   @override
   void initState() {
@@ -45,8 +43,6 @@ class _PermissionScreenState extends State<PermissionScreen>
     setState(() {
       _isNotificationGranted = statusMap['notification'] ?? false;
       _isAlarmGranted = statusMap['alarm'] ?? false;
-      _isBatteryOptimized = statusMap['battery'] ?? false;
-      _isSystemAlertWindowGranted = statusMap['systemAlert'] ?? false;
     });
   }
 
@@ -60,30 +56,15 @@ class _PermissionScreenState extends State<PermissionScreen>
     await PermissionService().requestExactAlarm();
     _checkPermissions();
   }
-  
-  Future<void> _requestBattery() async {
-    await PermissionService().requestBatteryOptimization();
-    _checkPermissions();
-  }
-
-  Future<void> _requestSystemAlert() async {
-    await PermissionService().requestSystemAlertWindow();
-    _checkPermissions();
-  }
 
   Future<void> _openAppSettings() async {
     await PermissionService().openSettings();
   }
 
-  bool get _allPermissionsGranted =>
-      _isNotificationGranted &&
-      _isAlarmGranted &&
-      _isBatteryOptimized &&
-      _isSystemAlertWindowGranted;
+  bool get _allPermissionsGranted => _isNotificationGranted && _isAlarmGranted;
 
   Future<void> _finishOnboarding() async {
     if (_allPermissionsGranted) {
-      // Lưu lại trạng thái đã xem màn hình này
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('seen_onboarding', true);
 
@@ -188,25 +169,6 @@ class _PermissionScreenState extends State<PermissionScreen>
                 isGranted: _isAlarmGranted,
                 onPressed: _requestAlarm,
               ),
-
-            // 3. Quyền Chạy ngầm (Pin)
-            _buildPermissionItem(
-              title: "Chạy trong nền (Pin)",
-              description: "Giữ báo thức hoạt động ngay cả khi tắt màn hình.",
-              icon: Icons.battery_alert,
-              isGranted: _isBatteryOptimized,
-              onPressed: _requestBattery,
-            ),
-
-            // 4. Quyền Hiển thị cửa sổ (Quan trọng cho Xiaomi)
-            _buildPermissionItem(
-              title: "Hiển thị trên ứng dụng khác",
-              description:
-                  "Bắt buộc với Xiaomi/Oppo để hiện màn hình báo thức.",
-              icon: Icons.layers,
-              isGranted: _isSystemAlertWindowGranted,
-              onPressed: _requestSystemAlert,
-            ),
 
             const Divider(height: 30),
 
