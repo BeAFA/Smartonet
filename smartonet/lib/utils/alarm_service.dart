@@ -1,16 +1,18 @@
+import 'dart:io';
 import 'package:alarm/alarm.dart';
 import '../database/models.dart';
-import 'dart:async';
-import 'dart:io';
+import 'audio_service.dart'; // Import để gọi hàm stopPreview nếu cần
 
 class AppointmentService {
   static Future<void> init() async {
     await Alarm.init();
   }
 
-  static Future<void> scheduleAppointment(Note note) async {
-    if (!note.hasAppointment || note.id == null) return;
+  static Future<bool> scheduleAppointment(Note note) async {
+    // 1. Kiểm tra tính hợp lệ cơ bản
+    if (!note.hasAppointment || note.id == null) return false;
 
+    // 2. Tạo đối tượng DateTime chính xác
     final scheduledDateTime = DateTime(
       note.date.year,
       note.date.month,
@@ -19,41 +21,73 @@ class AppointmentService {
       note.time.minute,
     );
 
-    if (scheduledDateTime.isBefore(DateTime.now())) return;
+    // 3. Không đặt báo thức cho quá khứ
+    if (scheduledDateTime.isBefore(DateTime.now())) {
+      print("Không thể đặt báo thức cho quá khứ: $scheduledDateTime");
+      return false;
+    }
 
-    String audioPath = 'assets/Default/alarm_digital.wav';
+    // 4. XỬ LÝ LOGIC ĐƯỜNG DẪN NHẠC (QUAN TRỌNG)
+    String finalAudioPath = 'assets/Default/alarm_digital.wav'; // Mặc định
 
-    if (note.alarmAudioPath != null && note.alarmAudioPath!.isNotEmpty) {
-      final bool fileExists = await File(note.alarmAudioPath!).exists();
-      if (fileExists) {
-        audioPath = note.alarmAudioPath!;
+    if (note.alarmAudioPath != null && note.alarmAudioPath!.trim().isNotEmpty) {
+      final customFile = File(note.alarmAudioPath!);
+      // Kiểm tra xem file còn tồn tại trong điện thoại không
+      if (await customFile.exists()) {
+        finalAudioPath = note.alarmAudioPath!;
+      } else {
+        print("File nhạc tùy chọn không tồn tại, quay về mặc định.");
       }
     }
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    // Delay nhẹ để đảm bảo UI/DB xử lý xong trước khi set Alarm
+    await Future.delayed(const Duration(milliseconds: 100));
 
+    // 5. Cấu hình AlarmSettings
     final alarmSettings = AlarmSettings(
       id: note.id!,
       dateTime: scheduledDateTime,
-      assetAudioPath: audioPath,
-      loopAudio: true,
-      vibrate: true,
-      warningNotificationOnKill: false,
-      androidFullScreenIntent: true,
-      androidStopAlarmOnTermination: false,
-      volumeSettings: VolumeSettings.fixed(volumeEnforced: false),
+      assetAudioPath: finalAudioPath, // Thư viện tự handle asset hay file path
+      loopAudio: true, // Lặp lại nhạc
+      vibrate: true, // Rung
+      volumeSettings: VolumeSettings.fade(
+        fadeDuration: const Duration(seconds: 3), // Fade in 3 giây cho đỡ giật mình
+        volumeEnforced: true // Bắt buộc âm lượng tối đa
+      ),
       notificationSettings: NotificationSettings(
         title: 'Đến giờ: ${note.title}',
         body: note.content.isNotEmpty ? note.content : 'Nhấn để tắt báo thức',
         stopButton: 'Dừng',
         icon: 'mipmap/ic_launcher',
       ),
+      // Quan trọng cho Android: Hiện màn hình full kể cả khi khóa máy
+      androidFullScreenIntent: true,
+      warningNotificationOnKill: false, 
     );
 
-    await Alarm.set(alarmSettings: alarmSettings);
+    // 6. Dừng báo thức cũ (nếu có trùng ID) trước khi đặt mới
+    await Alarm.stop(note.id!);
+    
+    // 7. Đặt báo thức mới
+    return await Alarm.set(alarmSettings: alarmSettings);
   }
 
+  // Hàm hủy/dừng báo thức
+  static Future<bool> stopAlarm(int id) async {
+    try {
+      // Dừng nhạc preview (nếu lỡ đang phát)
+      await AudioService().stopPreview();
+      
+      // Dừng báo thức hệ thống
+      return await Alarm.stop(id);
+    } catch (e) {
+      print("Lỗi khi dừng báo thức ID $id: $e");
+      return false;
+    }
+  }
+
+  // Hàm alias để code cũ của bạn gọi cancelAlarm vẫn chạy được
   static Future<void> cancelAlarm(int id) async {
-    await Alarm.stop(id);
+    await stopAlarm(id);
   }
 }
