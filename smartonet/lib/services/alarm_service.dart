@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'package:alarm/alarm.dart';
+import 'package:logging/logging.dart';
 import '../database/models.dart';
-import 'audio_service.dart'; // Import để gọi hàm stopPreview nếu cần
+import 'audio_service.dart';
 
 class AppointmentService {
+  static final _log = Logger('AppointmentService');
   static Future<void> init() async {
     await Alarm.init();
   }
@@ -23,7 +25,7 @@ class AppointmentService {
 
     // 3. Không đặt báo thức cho quá khứ
     if (scheduledDateTime.isBefore(DateTime.now())) {
-      print("Không thể đặt báo thức cho quá khứ: $scheduledDateTime");
+      _log.info("Không thể đặt báo thức cho quá khứ: $scheduledDateTime");
       return false;
     }
 
@@ -36,7 +38,7 @@ class AppointmentService {
       if (await customFile.exists()) {
         finalAudioPath = note.alarmAudioPath!;
       } else {
-        print("File nhạc tùy chọn không tồn tại, quay về mặc định.");
+        _log.warning("File nhạc tùy chọn không tồn tại, quay về mặc định.");
       }
     }
 
@@ -81,7 +83,7 @@ class AppointmentService {
       // Dừng báo thức hệ thống
       return await Alarm.stop(id);
     } catch (e) {
-      print("Lỗi khi dừng báo thức ID $id: $e");
+      _log.severe("Lỗi khi dừng báo thức ID $id: $e");
       return false;
     }
   }
