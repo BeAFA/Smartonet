@@ -1,9 +1,11 @@
 import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:logging/logging.dart';
 import 'dart:io';
 
 class AudioService {
+  static final _log = Logger('AudioService');
   static final AudioService _instance = AudioService._internal();
   factory AudioService() => _instance;
 
@@ -64,7 +66,7 @@ class AudioService {
       await _player.setLoopMode(LoopMode.off); // Nghe thử thì không cần lặp
       await _player.play();
     } catch (e) {
-      print("Lỗi phát nhạc preview: $e");
+      _log.warning("Lỗi phát nhạc preview: $e");
     }
   }
 

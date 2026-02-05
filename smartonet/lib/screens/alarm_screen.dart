@@ -1,10 +1,10 @@
 import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart';
-import '../database/models.dart';
-import '../utils/alarm_service.dart';
-import '../utils/dbconnector.dart';
-import '../main.dart';
 import 'dart:async';
+import '../database/models.dart';
+import '../services/alarm_service.dart';
+import '../services/dbconnector.dart';
+import '../screens/home_screen.dart';
 
 class AlarmScreen extends StatefulWidget {
   final AlarmSettings alarmSettings;
@@ -26,12 +26,10 @@ class _AlarmScreenState extends State<AlarmScreen>
   @override
   void initState() {
     super.initState();
-    // Load dữ liệu ghi chú ngay khi vào màn hình
     _loadNoteData();
 
-    // Hiệu ứng rung chuông (Animation)
     _controller = AnimationController(
-      duration: const Duration(seconds: 1), // Nhanh hơn chút cho khẩn trương
+      duration: const Duration(seconds: 1),
       vsync: this,
     )..repeat(reverse: true);
 
@@ -64,15 +62,12 @@ class _AlarmScreenState extends State<AlarmScreen>
     }
   }
 
-  // LOGIC DỪNG BÁO THỨC (QUAN TRỌNG)
   Future<void> _handleStop() async {
     setState(() => _isLoading = true);
-    
-    // Gọi hàm dừng tập trung ở AppointmentService
+
     await AppointmentService.stopAlarm(widget.alarmSettings.id);
 
     if (mounted) {
-      // Thoát về màn hình chính và xóa lịch sử navigation để không back lại được màn hình này
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (context) => const MainScreen()),
         (Route<dynamic> route) => false,
@@ -80,15 +75,12 @@ class _AlarmScreenState extends State<AlarmScreen>
     }
   }
 
-  // LOGIC HOÃN BÁO THỨC (SNOOZE)
   Future<void> _handleSnooze() async {
-    // 1. Dừng âm thanh báo thức hiện tại trước
     await AppointmentService.stopAlarm(widget.alarmSettings.id);
 
-    // Nếu không tìm thấy ghi chú gốc, chỉ dừng và thoát
     if (_currentNote == null) {
       if (mounted) {
-         Navigator.of(context).pushAndRemoveUntil(
+        Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const MainScreen()),
           (Route<dynamic> route) => false,
         );
@@ -96,36 +88,30 @@ class _AlarmScreenState extends State<AlarmScreen>
       return;
     }
 
-    // 2. Tính toán thời gian mới (+5 phút)
     DateTime now = DateTime.now();
     DateTime newTime = now.add(const Duration(minutes: 5));
 
-    // 3. (Tùy chọn) Kiểm tra xung đột nếu cần - Ở đây mình bỏ qua để ưu tiên Snooze chạy được ngay
-    
     setState(() => _isLoading = true);
 
     try {
-      // 4. Cập nhật thời gian vào Object Note
       _currentNote!.time = newTime;
       _currentNote!.date = newTime;
       _currentNote!.hasAppointment = true;
 
-      // 5. Lưu vào Database
       await DbConnector.instance.saveNote(_currentNote!);
 
-      // 6. Đặt lịch báo thức mới
       await AppointmentService.scheduleAppointment(_currentNote!);
-      
-      debugPrint("Đã hoãn báo thức 5 phút: ${newTime.toString()}");
 
+      debugPrint("Đã hoãn báo thức 5 phút: ${newTime.toString()}");
     } catch (e) {
       debugPrint("Lỗi khi lưu snooze: $e");
     }
 
-    // 7. Thoát màn hình
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const MainScreen()),
+        MaterialPageRoute(
+          builder: (context) => const MainScreen(showPermissionWarning: true),
+        ),
         (Route<dynamic> route) => false,
       );
     }
@@ -134,9 +120,8 @@ class _AlarmScreenState extends State<AlarmScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Dùng WillPopScope (hoặc PopScope trên Flutter mới) để chặn nút Back cứng
       body: PopScope(
-        canPop: false, // Không cho phép vuốt back hoặc bấm nút back
+        canPop: false,
         child: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -153,7 +138,6 @@ class _AlarmScreenState extends State<AlarmScreen>
                 : Column(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // --- PHẦN TEXT THÔNG TIN ---
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
                         child: Column(
@@ -185,7 +169,7 @@ class _AlarmScreenState extends State<AlarmScreen>
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.1),
+                                  color: Colors.white.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
@@ -204,7 +188,6 @@ class _AlarmScreenState extends State<AlarmScreen>
                         ),
                       ),
 
-                      // --- ICON ĐỒNG HỒ ---
                       ScaleTransition(
                         scale: _scaleAnimation,
                         child: Container(
@@ -212,11 +195,13 @@ class _AlarmScreenState extends State<AlarmScreen>
                           height: 160,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.2),
+                            color: Colors.white.withValues(alpha: 0.2),
                             border: Border.all(color: Colors.white30, width: 2),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.blue.shade900.withOpacity(0.4),
+                                color: Colors.blue.shade900.withValues(
+                                  alpha: 0.4,
+                                ),
                                 blurRadius: 40,
                                 spreadRadius: 10,
                               ),
@@ -230,7 +215,6 @@ class _AlarmScreenState extends State<AlarmScreen>
                         ),
                       ),
 
-                      // --- BUTTONS ---
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -281,7 +265,7 @@ class _AlarmScreenState extends State<AlarmScreen>
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
+                    color: Colors.black.withValues(alpha: 0.2),
                     blurRadius: 10,
                     offset: const Offset(0, 5),
                   ),
