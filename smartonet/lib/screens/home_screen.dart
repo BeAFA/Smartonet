@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:alarm/utils/alarm_set.dart';
 import 'package:flutter/material.dart';
 import 'package:alarm/alarm.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:just_audio/just_audio.dart';
 import '../services/dbconnector.dart';
 import '../database/models.dart';
 import '../services/alarm_service.dart';
@@ -54,8 +56,8 @@ class _MainScreenState extends State<MainScreen> {
     _loadDataFromDB();
 
     if (widget.showPermissionWarning) {
-    checkAndWarnPermission();
-  }
+      checkAndWarnPermission();
+    }
 
     _subscription = Alarm.ringing.listen((alarmSet) {
       if (mounted && alarmSet.alarms.isNotEmpty) {
@@ -109,10 +111,13 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> checkAndWarnPermission() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isHiddenForever = prefs.getBool('hide_permission_forever') ?? false;
+    if (isHiddenForever) return;
     final granted = await PermissionService().isNotificationGranted();
     if (!granted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        showPermissionDialog(context);
+        showPermissionDialog(context, showPermanentDisable: true);
       });
     }
   }
@@ -160,7 +165,7 @@ class _MainScreenState extends State<MainScreen> {
       builder: (context) {
         return NoteFormDialog(
           noteData: existingNote,
-          onSubmit: (title, content, pickedDateTime, audioPath) async {
+          onSubmit: (title, content, pickedDateTime, audioPath, volume) async {
             bool hasAppt = pickedDateTime != null;
             DateTime saveDate = pickedDateTime ?? DateTime.now();
 
@@ -172,6 +177,7 @@ class _MainScreenState extends State<MainScreen> {
               time: saveDate,
               hasAppointment: hasAppt,
               alarmAudioPath: audioPath,
+              volume: volume,
             );
 
             int id = await DbConnector.instance.saveNote(noteToSave);
@@ -179,8 +185,17 @@ class _MainScreenState extends State<MainScreen> {
 
             if (hasAppt) {
               final granted = await PermissionService().isNotificationGranted();
-              if (!granted && context.mounted) {
-                showPermissionDialog(context);
+
+              if (!granted) {
+                final prefs = await SharedPreferences.getInstance();
+                final isHiddenForever =
+                    prefs.getBool('hide_permission_forever') ?? false;
+
+                if (!isHiddenForever && context.mounted) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    showPermissionDialog(context, showPermanentDisable: true);
+                  });
+                }
               }
               await AppointmentService.scheduleAppointment(noteToSave);
             } else {
@@ -496,6 +511,7 @@ class NoteFormDialog extends StatefulWidget {
     String content,
     DateTime? scheduledTime,
     String? audioPath,
+    double volume,
   )
   onSubmit;
   const NoteFormDialog({super.key, this.noteData, required this.onSubmit});
@@ -507,9 +523,13 @@ class NoteFormDialog extends StatefulWidget {
 class _NoteFormDialogState extends State<NoteFormDialog> {
   late TextEditingController _titleCtrl;
   late TextEditingController _contentCtrl;
+  final AudioPlayer _audioPlayer = AudioPlayer();
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   String? _selectedAudioPath;
+  double _volume = 1.0;
+  Timer? _debounceTimer;
+  Timer? _stopTimer;
 
   @override
   void initState() {
@@ -520,7 +540,55 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
       _selectedDate = widget.noteData!.date;
       _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
       _selectedAudioPath = widget.noteData?.alarmAudioPath;
+      _volume = widget.noteData?.volume ?? 1.0;
     }
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _contentCtrl.dispose();
+    _audioPlayer.dispose();
+    _debounceTimer?.cancel();
+    _stopTimer?.cancel();
+    super.dispose();
+  }
+
+  void _previewVolume(double newVolume) {
+    // 1. Nếu người dùng đang kéo liên tục, hủy các lệnh phát nhạc/tắt nhạc trước đó
+    _debounceTimer?.cancel();
+    _stopTimer?.cancel();
+
+    // Dừng ngay lập tức âm thanh đang phát (nếu có) để tránh chồng âm
+    _audioPlayer.stop();
+
+    // 2. Bắt đầu đếm ngược 300ms (Thời gian chờ người dùng chốt volume)
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        // Cấu hình file nhạc (Nếu chưa load thì load lại)
+        if (_selectedAudioPath == null) {
+          await _audioPlayer.setAsset('assets/Default/alarm_digital.wav');
+        } else {
+          await _audioPlayer.setFilePath(_selectedAudioPath!);
+        }
+
+        double simulatedSystemMax = 1.0;
+        double previewVolume = simulatedSystemMax * newVolume;
+
+        // Set volume mới
+        await _audioPlayer.setVolume(previewVolume);
+
+        // Phát nhạc
+        await _audioPlayer.play();
+
+        // 3. Đặt lịch tự động tắt sau 2 giây (3 giây hơi lâu cho việc test volume)
+        _stopTimer = Timer(const Duration(seconds: 2), () {
+          _audioPlayer.stop();
+        });
+      } catch (e) {
+        debugPrint("Lỗi preview volume: $e");
+      }
+    });
   }
 
   String _getAudioDisplayName() {
@@ -686,6 +754,33 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                     ],
                   ),
                 ),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.volume_mute,
+                      size: 20,
+                      color: Colors.blue.withValues(alpha: 0.6),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: _volume,
+                        min: 0.0,
+                        max: 1.0,
+                        divisions: 100,
+                        label: "${(_volume * 100).round()}%",
+                        activeColor: Colors.blue,
+                        onChanged: (double value) {
+                          if (!mounted) return;
+                          setState(() {
+                            _volume = value;
+                          });
+                          _previewVolume(_volume);
+                        },
+                      ),
+                    ),
+                    Icon(Icons.volume_up, size: 20, color: Colors.blue),
+                  ],
+                ),
               ],
               const SizedBox(height: 10),
               SizedBox(
@@ -710,6 +805,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       _contentCtrl.text,
                       finalDT,
                       _selectedAudioPath,
+                      _volume,
                     );
                     Navigator.pop(context);
                   },
