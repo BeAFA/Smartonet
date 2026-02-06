@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:alarm/utils/alarm_set.dart';
 import 'package:flutter/material.dart';
 import 'package:alarm/alarm.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import '../services/dbconnector.dart';
 import '../database/models.dart';
 import '../services/alarm_service.dart';
@@ -54,8 +57,8 @@ class _MainScreenState extends State<MainScreen> {
     _loadDataFromDB();
 
     if (widget.showPermissionWarning) {
-    checkAndWarnPermission();
-  }
+      checkAndWarnPermission();
+    }
 
     _subscription = Alarm.ringing.listen((alarmSet) {
       if (mounted && alarmSet.alarms.isNotEmpty) {
@@ -109,10 +112,13 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> checkAndWarnPermission() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isHiddenForever = prefs.getBool('hide_permission_forever') ?? false;
+    if (isHiddenForever) return;
     final granted = await PermissionService().isNotificationGranted();
     if (!granted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        showPermissionDialog(context);
+        showPermissionDialog(context, showPermanentDisable: true);
       });
     }
   }
@@ -160,7 +166,7 @@ class _MainScreenState extends State<MainScreen> {
       builder: (context) {
         return NoteFormDialog(
           noteData: existingNote,
-          onSubmit: (title, content, pickedDateTime, audioPath) async {
+          onSubmit: (title, content, pickedDateTime, audioPath, volume) async {
             bool hasAppt = pickedDateTime != null;
             DateTime saveDate = pickedDateTime ?? DateTime.now();
 
@@ -172,6 +178,7 @@ class _MainScreenState extends State<MainScreen> {
               time: saveDate,
               hasAppointment: hasAppt,
               alarmAudioPath: audioPath,
+              volume: volume,
             );
 
             int id = await DbConnector.instance.saveNote(noteToSave);
@@ -179,8 +186,17 @@ class _MainScreenState extends State<MainScreen> {
 
             if (hasAppt) {
               final granted = await PermissionService().isNotificationGranted();
-              if (!granted && context.mounted) {
-                showPermissionDialog(context);
+
+              if (!granted) {
+                final prefs = await SharedPreferences.getInstance();
+                final isHiddenForever =
+                    prefs.getBool('hide_permission_forever') ?? false;
+
+                if (!isHiddenForever && context.mounted) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    showPermissionDialog(context, showPermanentDisable: true);
+                  });
+                }
               }
               await AppointmentService.scheduleAppointment(noteToSave);
             } else {
@@ -206,7 +222,9 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
-            onPressed: () {},
+            onPressed: () {
+              _openRecentAppointments;
+            },
           ),
           const SizedBox(width: 8),
           const CircleAvatar(
@@ -250,6 +268,106 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  List<Note> _getRecentPastAppointments() {
+    final past =
+        _allNotes.where((n) => n.hasAppointment && n.isPastAppointment).toList()
+          ..sort((a, b) => b.time.compareTo(a.time)); // mới nhất trước
+
+    return past.take(10).toList();
+  }
+
+  void _openRecentAppointments() {
+    final recent = _getRecentPastAppointments();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          expand: false,
+          builder: (context, controller) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Center(
+                    child: Text(
+                      "10 lịch hẹn gần đây",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (recent.isEmpty)
+                    Expanded(
+                      child: Center(
+                        child: Text(
+                          "Chưa có lịch hẹn nào đã qua",
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.separated(
+                        controller: controller,
+                        itemCount: recent.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(color: Colors.grey.shade200),
+                        itemBuilder: (context, i) {
+                          final n = recent[i];
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              n.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "${n.date.day}/${n.date.month} ${n.time.hour}:${n.time.minute.toString().padLeft(2, '0')}",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                if (n.content.isNotEmpty)
+                                  Text(
+                                    n.content,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -325,14 +443,16 @@ class _MainScreenState extends State<MainScreen> {
 
   // --- DASHBOARD: CHỈNH SỬA LOGIC HIỂN THỊ ---
   Widget _buildDashboard() {
-    // 1. Lịch hẹn: Chỉ lấy những cái có hasAppointment = true
-    final appointments = _allNotes.where((n) => n.hasAppointment).toList()
-      ..sort((a, b) => a.time.compareTo(b.time));
+    final upcomingAppointments =
+        _allNotes
+            .where((n) => n.hasAppointment && !n.isPastAppointment)
+            .toList()
+          ..sort((a, b) => a.time.compareTo(b.time));
 
     // 2. Ghi chú: Lấy TOÀN BỘ (bao gồm cả Lịch hẹn, vì Lịch hẹn cũng là một dạng Ghi chú)
     // Sắp xếp theo ID giảm dần (mới nhất lên đầu)
-    final allRecentNotes = _allNotes.toList()
-      ..sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+    final recentNotes = _allNotes.toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -344,7 +464,7 @@ class _MainScreenState extends State<MainScreen> {
             onTap: () => setState(() => _selectedIndex = 2),
           ),
           const SizedBox(height: 10),
-          appointments.isEmpty
+          upcomingAppointments.isEmpty
               ? _buildEmptyState(
                   "Không có lịch hẹn nào",
                   Icons.notifications_off_outlined,
@@ -352,45 +472,41 @@ class _MainScreenState extends State<MainScreen> {
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: appointments.take(3).length,
+                  itemCount: upcomingAppointments.take(3).length,
                   itemBuilder: (ctx, i) => ReminderCard(
-                    title: appointments[i].title,
-                    content: appointments[i].content,
-                    date: appointments[i].date,
-                    time: appointments[i].time,
-                    onEdit: () =>
-                        _openNoteForm(context, existingNote: appointments[i]),
-                    onDelete: () => _handleDelete(appointments[i].id!),
+                    title: upcomingAppointments[i].title,
+                    content: upcomingAppointments[i].content,
+                    date: upcomingAppointments[i].date,
+                    time: upcomingAppointments[i].time,
+                    isPast: upcomingAppointments[i].isPastAppointment,
+                    onEdit: () => _openNoteForm(
+                      context,
+                      existingNote: upcomingAppointments[i],
+                    ),
+                    onDelete: () => _handleDelete(upcomingAppointments[i].id!),
                   ),
                 ),
-          const SizedBox(height: 25),
+          const SizedBox(height: 5),
           SectionHeader(
             title: 'Ghi chú gần đây',
             onTap: () => setState(() => _selectedIndex = 0),
           ),
-          const SizedBox(height: 10),
-          // Bây giờ danh sách này sẽ hiển thị cả Lịch hẹn dưới dạng Card Ghi chú
-          allRecentNotes.isEmpty
+          const SizedBox(height: 5),
+          recentNotes.isEmpty
               ? _buildEmptyState("Chưa có ghi chú nào", Icons.note_add_outlined)
-              : GridView.builder(
+              : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemCount: allRecentNotes.take(4).length,
+                  itemCount: recentNotes.take(4).length,
                   itemBuilder: (ctx, i) => NoteCard(
-                    title: allRecentNotes[i].title,
-                    content: allRecentNotes[i].content,
-                    date: allRecentNotes[i].hasAppointment
-                        ? allRecentNotes[i].time
-                        : null,
-                    isLinkedAppointment: allRecentNotes[i].hasAppointment,
+                    title: recentNotes[i].title,
+                    content: recentNotes[i].content,
+                    date: recentNotes[i].date,
+                    isPastAppointment: recentNotes[i].isPastAppointment,
+                    isLinkedAppointment: recentNotes[i].hasAppointment,
                     onEdit: () =>
-                        _openNoteForm(context, existingNote: allRecentNotes[i]),
-                    onDelete: () => _handleDelete(allRecentNotes[i].id!),
+                        _openNoteForm(context, existingNote: recentNotes[i]),
+                    onDelete: () => _handleDelete(recentNotes[i].id!),
                   ),
                 ),
           const SizedBox(height: 80),
@@ -404,7 +520,7 @@ class _MainScreenState extends State<MainScreen> {
     bool filterOnlyNotes = false,
     bool filterOnlyAppointments = false,
   }) {
-    List<Note> data = [];
+    List data = [];
     String title = "";
     IconData emptyIcon = Icons.inbox;
 
@@ -416,8 +532,7 @@ class _MainScreenState extends State<MainScreen> {
       emptyIcon = Icons.notifications_off_outlined;
     } else {
       // Tab Ghi chú: HIỆN TẤT CẢ (Lịch hẹn + Ghi chú thường)
-      data = _allNotes.toList()
-        ..sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+      data = _allNotes.toList()..sort((a, b) => a.time.compareTo(b.time));
       title = "Tất cả Ghi chú";
       emptyIcon = Icons.note_add_outlined;
     }
@@ -447,6 +562,7 @@ class _MainScreenState extends State<MainScreen> {
                         content: note.content,
                         date: note.date,
                         time: note.time,
+                        isPast: note.isPastAppointment,
                         onEdit: () =>
                             _openNoteForm(context, existingNote: note),
                         onDelete: () => _handleDelete(note.id!),
@@ -458,10 +574,10 @@ class _MainScreenState extends State<MainScreen> {
                         child: NoteCard(
                           title: note.title,
                           content: note.content,
-                          date: note.hasAppointment ? note.time : null,
+                          date: note.date,
                           isFullWidth: true,
-                          isLinkedAppointment:
-                              note.hasAppointment, // Truyền cờ này vào
+                          isLinkedAppointment: note.hasAppointment,
+                          isPastAppointment: note.isPastAppointment,
                           onEdit: () =>
                               _openNoteForm(context, existingNote: note),
                           onDelete: () => _handleDelete(note.id!),
@@ -496,6 +612,7 @@ class NoteFormDialog extends StatefulWidget {
     String content,
     DateTime? scheduledTime,
     String? audioPath,
+    double volume,
   )
   onSubmit;
   const NoteFormDialog({super.key, this.noteData, required this.onSubmit});
@@ -510,17 +627,135 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   String? _selectedAudioPath;
+  double _volume = 0.5;
+  Timer? _debounceTimer;
+  Timer? _stopTimer;
+  double? _originalSystemVolume;
+  bool _isPreviewPlaying = false;
+  late FocusNode _titleFocusNode;
+  String _defaultTitle = "Ghi chú mới";
+  bool _isUsingDefaultTitle = true;
+  late DateTime _defaultDate;
 
   @override
   void initState() {
     super.initState();
-    _titleCtrl = TextEditingController(text: widget.noteData?.title ?? '');
+
+    _titleCtrl = TextEditingController(
+      text: widget.noteData?.title ?? _defaultTitle,
+    );
     _contentCtrl = TextEditingController(text: widget.noteData?.content ?? '');
+
+    _isUsingDefaultTitle = widget.noteData?.title == null;
+
+    _titleFocusNode = FocusNode();
+    _titleFocusNode.addListener(() {
+      if (!mounted) return;
+      if (_titleFocusNode.hasFocus) {
+        if (_isUsingDefaultTitle) {
+          _titleCtrl.clear();
+          _isUsingDefaultTitle = false;
+        }
+      } else {
+        if (_titleCtrl.text.trim().isEmpty) {
+          _titleCtrl.text = _defaultTitle;
+          _isUsingDefaultTitle = true;
+        }
+      }
+    });
+
+    _defaultDate = DateTime.now();
+
+    if (widget.noteData != null && widget.noteData!.hasAppointment) {
+      _selectedDate = widget.noteData!.date;
+    } else {
+      _selectedDate = _defaultDate;
+    }
+
+    AudioService().init();
+
     if (widget.noteData != null && widget.noteData!.hasAppointment) {
       _selectedDate = widget.noteData!.date;
       _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
       _selectedAudioPath = widget.noteData?.alarmAudioPath;
+      _volume = widget.noteData?.volume ?? 0.5;
     }
+    _initVolumeController();
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _contentCtrl.dispose();
+    _titleFocusNode.dispose();
+    AudioService().stopPreview();
+    FlutterVolumeController.removeListener();
+    _debounceTimer?.cancel();
+    _stopTimer?.cancel();
+    super.dispose();
+  }
+
+  void _updateDefaultTitleBasedOnTime() {
+    final bool hasTime = _selectedTime != null;
+
+    final String newDefault = hasTime ? "Lịch nhắc mới" : "Ghi chú mới";
+
+    // Nếu default không đổi thì thôi
+    if (_defaultTitle == newDefault) return;
+
+    _defaultTitle = newDefault;
+
+    // CHỈ cập nhật UI nếu user chưa nhập gì riêng
+    if (_isUsingDefaultTitle) {
+      setState(() {
+        _titleCtrl.text = _defaultTitle;
+      });
+    }
+  }
+
+  Future<void> _initVolumeController() async {
+    if (Platform.isAndroid) {
+      await FlutterVolumeController.setAndroidAudioStream(
+        stream: AudioStream.alarm,
+      );
+    }
+
+    _originalSystemVolume ??= await FlutterVolumeController.getVolume();
+
+    if (widget.noteData == null) {
+      _volume = 1.0;
+    } else {
+      _volume = widget.noteData?.volume ?? 1.0;
+    }
+
+    setState(() {});
+  }
+
+  void _onVolumeChanged(double newVolume) {
+    setState(() {
+      _volume = newVolume;
+    });
+
+    _debounceTimer?.cancel();
+    _stopTimer?.cancel();
+    AudioService().stopPreview();
+    _isPreviewPlaying = false;
+
+    _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
+      await FlutterVolumeController.setVolume(
+        newVolume,
+        stream: AudioStream.alarm,
+      );
+
+      String source = _selectedAudioPath ?? 'assets/Default/alarm_digital.wav';
+      AudioService().playPreview(source: source);
+      _isPreviewPlaying = true;
+
+      _stopTimer = Timer(const Duration(seconds: 3), () {
+        AudioService().stopPreview();
+        _isPreviewPlaying = false;
+      });
+    });
   }
 
   String _getAudioDisplayName() {
@@ -551,6 +786,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
               const SizedBox(height: 20),
               TextField(
                 controller: _titleCtrl,
+                focusNode: _titleFocusNode,
                 decoration: InputDecoration(
                   labelText: 'Tiêu đề',
                   border: OutlineInputBorder(
@@ -595,11 +831,16 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       onPressed: () async {
                         final d = await showDatePicker(
                           context: context,
-                          initialDate: _selectedDate ?? DateTime.now(),
+                          initialDate: _selectedDate ?? _defaultDate,
                           firstDate: DateTime.now(),
                           lastDate: DateTime(2100),
                         );
-                        if (d != null) setState(() => _selectedDate = d);
+
+                        if (d != null) {
+                          setState(() {
+                            _selectedDate = d;
+                          });
+                        }
                       },
                     ),
                   ),
@@ -617,17 +858,22 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                           context: context,
                           initialTime: _selectedTime ?? TimeOfDay.now(),
                         );
-                        if (t != null) setState(() => _selectedTime = t);
+                        if (t != null) {
+                          setState(() {
+                            _selectedTime = t;
+                          });
+                          _updateDefaultTitleBasedOnTime();
+                        }
                       },
                     ),
                   ),
-                  if (_selectedDate != null || _selectedTime != null)
+                  if (_selectedTime != null)
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.red),
                       onPressed: () => setState(() {
-                        _selectedDate = null;
                         _selectedTime = null;
                         _selectedAudioPath = null;
+                        _updateDefaultTitleBasedOnTime();
                       }),
                     ),
                 ],
@@ -686,6 +932,27 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                     ],
                   ),
                 ),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.volume_mute,
+                      size: 20,
+                      color: Colors.blue.withValues(alpha: 0.6),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: _volume,
+                        min: 0.0,
+                        max: 1.0,
+                        divisions: 100,
+                        label: "${(_volume * 100).round()}%",
+                        activeColor: Colors.blue,
+                        onChanged: _onVolumeChanged,
+                      ),
+                    ),
+                    Icon(Icons.volume_up, size: 20, color: Colors.blue),
+                  ],
+                ),
               ],
               const SizedBox(height: 10),
               SizedBox(
@@ -693,8 +960,22 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                 height: 50,
                 child: FilledButton(
                   child: const Text("Lưu"),
-                  onPressed: () {
-                    if (_titleCtrl.text.trim().isEmpty) return;
+                  onPressed: () async {
+                    String finalTitle = _isUsingDefaultTitle
+                        ? _defaultTitle
+                        : _titleCtrl.text.trim();
+                    _debounceTimer?.cancel();
+                    _stopTimer?.cancel();
+                    if (_isPreviewPlaying) {
+                      await AudioService().stopPreview();
+                      _isPreviewPlaying = false;
+                    }
+                    if (_originalSystemVolume != null) {
+                      await FlutterVolumeController.setVolume(
+                        _originalSystemVolume!,
+                        stream: AudioStream.alarm,
+                      );
+                    }
                     DateTime? finalDT;
                     if (_selectedDate != null && _selectedTime != null) {
                       finalDT = DateTime(
@@ -706,12 +987,15 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       );
                     }
                     widget.onSubmit(
-                      _titleCtrl.text,
+                      finalTitle,
                       _contentCtrl.text,
                       finalDT,
                       _selectedAudioPath,
+                      _volume,
                     );
-                    Navigator.pop(context);
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                    }
                   },
                 ),
               ),
@@ -747,6 +1031,7 @@ class ReminderCard extends StatelessWidget {
   final String title, content;
   final DateTime date, time;
   final VoidCallback? onEdit, onDelete;
+  final bool isPast;
   const ReminderCard({
     super.key,
     required this.title,
@@ -755,6 +1040,7 @@ class ReminderCard extends StatelessWidget {
     required this.time,
     this.onEdit,
     this.onDelete,
+    this.isPast = false,
   });
 
   @override
@@ -777,7 +1063,25 @@ class ReminderCard extends StatelessWidget {
           ),
           child: const Icon(Icons.alarm, color: Colors.red),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (isPast)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text("Đã qua", style: TextStyle(fontSize: 10)),
+              ),
+          ],
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -818,30 +1122,31 @@ class ReminderCard extends StatelessWidget {
 
 class NoteCard extends StatelessWidget {
   final String title, content;
-  final DateTime? date; // 1. Thêm biến ngày giờ (có thể null)
+  final DateTime? date;
   final bool isFullWidth;
   final bool isLinkedAppointment;
   final VoidCallback? onEdit, onDelete;
+  final bool isPastAppointment;
 
   const NoteCard({
     super.key,
     required this.title,
     required this.content,
-    this.date, // 2. Thêm vào constructor
+    this.date,
     this.isFullWidth = false,
     this.isLinkedAppointment = false,
     this.onEdit,
     this.onDelete,
+    this.isPastAppointment = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Helper để format giờ cho đẹp (VD: 09:05)
     String timeStr = "";
     if (date != null) {
       final hour = date!.hour.toString().padLeft(2, '0');
       final minute = date!.minute.toString().padLeft(2, '0');
-      timeStr = "$hour:$minute ${date!.day}/${date!.month}";
+      timeStr = "$hour:$minute   ${date!.day}/${date!.month}";
     }
 
     return Card(
@@ -885,17 +1190,32 @@ class NoteCard extends StatelessWidget {
                           ),
                         ),
                       ),
-
+                      if (isPastAppointment) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            "Đã qua",
+                            style: TextStyle(fontSize: 10),
+                          ),
+                        ),
+                      ],
                       // Hiển thị Ngày giờ (Nếu có)
                       if (date != null) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 5),
                         Icon(
                           Icons.access_time,
                           size: 12,
                           color: Colors.grey.shade500,
                         ),
-                        const SizedBox(width: 4),
-                        // Dùng Flexible để text không bị tràn nếu quá dài
+                        const SizedBox(width: 2),
                         Flexible(
                           child: Text(
                             timeStr,
@@ -938,7 +1258,7 @@ class NoteCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 5),
 
             // --- TIÊU ĐỀ ---
             Text(
@@ -947,7 +1267,6 @@ class NoteCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-            const SizedBox(height: 6),
 
             // --- NỘI DUNG ---
             Text(

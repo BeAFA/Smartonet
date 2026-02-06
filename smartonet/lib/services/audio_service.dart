@@ -24,7 +24,7 @@ class AudioService {
       avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
       androidAudioAttributes: AndroidAudioAttributes(
         contentType: AndroidAudioContentType.music,
-        usage: AndroidAudioUsage.media,
+        usage: AndroidAudioUsage.alarm,
       ),
       androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
     ));
@@ -34,7 +34,6 @@ class AudioService {
   // Hàm nghe thử nhạc (Preview) khi chọn trong cài đặt
   Future<void> playPreview({
     required String source,
-    double volume = 1.0,
   }) async {
     await init();
     
@@ -62,7 +61,7 @@ class AudioService {
         await _player.setAsset(source);
       }
 
-      await _player.setVolume(volume);
+      await _player.setVolume(1.0);
       await _player.setLoopMode(LoopMode.off); // Nghe thử thì không cần lặp
       await _player.play();
     } catch (e) {
@@ -82,7 +81,6 @@ class AudioService {
   }
 
   Future<String?> pickAudioFile() async {
-    // Hỗ trợ cả mp3 và wav
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg'],

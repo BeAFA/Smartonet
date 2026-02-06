@@ -53,11 +53,12 @@ class AppointmentService {
       loopAudio: true, // Lặp lại nhạc
       vibrate: true, // Rung
       volumeSettings: VolumeSettings.fade(
-        fadeDuration: const Duration(seconds: 3), // Fade in 3 giây cho đỡ giật mình
+        volume: note.volume,
+        fadeDuration: const Duration(seconds: 5), // Fade in 3 giây cho đỡ giật mình
         volumeEnforced: true // Bắt buộc âm lượng tối đa
       ),
       notificationSettings: NotificationSettings(
-        title: 'Đến giờ: ${note.title}',
+        title: note.title,
         body: note.content.isNotEmpty ? note.content : 'Nhấn để tắt báo thức',
         stopButton: 'Dừng',
         icon: 'mipmap/ic_launcher',
