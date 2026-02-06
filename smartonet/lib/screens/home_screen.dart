@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:alarm/utils/alarm_set.dart';
 import 'package:flutter/material.dart';
 import 'package:alarm/alarm.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:flutter_volume_controller/flutter_volume_controller.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import '../services/dbconnector.dart';
 import '../database/models.dart';
 import '../services/alarm_service.dart';
@@ -523,11 +526,10 @@ class NoteFormDialog extends StatefulWidget {
 class _NoteFormDialogState extends State<NoteFormDialog> {
   late TextEditingController _titleCtrl;
   late TextEditingController _contentCtrl;
-  final AudioPlayer _audioPlayer = AudioPlayer();
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   String? _selectedAudioPath;
-  double _volume = 1.0;
+  double _volume = 0.5;
   Timer? _debounceTimer;
   Timer? _stopTimer;
 
@@ -536,58 +538,88 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     super.initState();
     _titleCtrl = TextEditingController(text: widget.noteData?.title ?? '');
     _contentCtrl = TextEditingController(text: widget.noteData?.content ?? '');
+
+    AudioService().init();
+
     if (widget.noteData != null && widget.noteData!.hasAppointment) {
       _selectedDate = widget.noteData!.date;
       _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
       _selectedAudioPath = widget.noteData?.alarmAudioPath;
-      _volume = widget.noteData?.volume ?? 1.0;
+      _volume = widget.noteData?.volume ?? 0.5;
     }
+    _initVolumeController();
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
     _contentCtrl.dispose();
-    _audioPlayer.dispose();
+    FlutterVolumeController.removeListener();
     _debounceTimer?.cancel();
     _stopTimer?.cancel();
     super.dispose();
   }
 
-  void _previewVolume(double newVolume) {
-    // 1. Nếu người dùng đang kéo liên tục, hủy các lệnh phát nhạc/tắt nhạc trước đó
-    _debounceTimer?.cancel();
-    _stopTimer?.cancel();
+  Future<void> _initVolumeController() async {
+    if (Platform.isAndroid) {
+      await FlutterVolumeController.setAndroidAudioStream(
+        stream: AudioStream.alarm,
+      );
+    }
 
-    // Dừng ngay lập tức âm thanh đang phát (nếu có) để tránh chồng âm
-    _audioPlayer.stop();
-
-    // 2. Bắt đầu đếm ngược 300ms (Thời gian chờ người dùng chốt volume)
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
-      try {
-        // Cấu hình file nhạc (Nếu chưa load thì load lại)
-        if (_selectedAudioPath == null) {
-          await _audioPlayer.setAsset('assets/Default/alarm_digital.wav');
-        } else {
-          await _audioPlayer.setFilePath(_selectedAudioPath!);
-        }
-
-        double simulatedSystemMax = 1.0;
-        double previewVolume = simulatedSystemMax * newVolume;
-
-        // Set volume mới
-        await _audioPlayer.setVolume(previewVolume);
-
-        // Phát nhạc
-        await _audioPlayer.play();
-
-        // 3. Đặt lịch tự động tắt sau 2 giây (3 giây hơi lâu cho việc test volume)
-        _stopTimer = Timer(const Duration(seconds: 2), () {
-          _audioPlayer.stop();
+    // 2. Nếu là tạo mới, lấy âm lượng hiện tại của hệ thống để hiển thị lên Slider
+    if (widget.noteData == null) {
+      double? currentVol = await FlutterVolumeController.getVolume();
+      if (currentVol != null) {
+        setState(() {
+          _volume = currentVol;
         });
-      } catch (e) {
-        debugPrint("Lỗi preview volume: $e");
       }
+    } else {
+      // Nếu là chỉnh sửa, set âm lượng hệ thống về mức đã lưu trong ghi chú
+      await FlutterVolumeController.setVolume(
+        _volume,
+        stream: AudioStream.alarm,
+      );
+    }
+
+    // 3. Lắng nghe sự kiện nếu người dùng bấm phím cứng tăng giảm âm lượng
+    FlutterVolumeController.addListener(
+      (newVol) {
+        if (mounted) {
+          setState(() {
+            _volume = newVol;
+          });
+        }
+      },
+      stream: AudioStream.alarm, // Quan trọng: chỉ lắng nghe dòng Alarm
+    );
+  }
+
+  void _onVolumeChanged(double newVolume) {
+    setState(() {
+      _volume = newVolume;
+    });
+
+    // Debounce: Chờ người dùng dừng kéo 200ms mới thực hiện lệnh
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
+      // 1. Set âm lượng hệ thống (Thay đổi trực tiếp độ to của loa)
+      // Đây chính là logic: Lấy Max Hệ Thống * newVolume
+      await FlutterVolumeController.setVolume(
+        newVolume,
+        stream: AudioStream.alarm, // Quan trọng
+      );
+
+      // 2. Phát nhạc nghe thử
+      // (Không cần truyền volume vào hàm playPreview vì ta đã chỉnh system volume rồi)
+      String source = _selectedAudioPath ?? 'assets/Default/alarm_digital.wav';
+      AudioService().playPreview(source: source);
+
+      // 3. Tự động tắt sau 3 giây
+      Future.delayed(const Duration(seconds: 3), () {
+        AudioService().stopPreview();
+      });
     });
   }
 
@@ -597,6 +629,43 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     }
     return _selectedAudioPath!.split('/').last;
   }
+
+  // void _previewVolume(double newVolume) {
+  //   // 1. Nếu người dùng đang kéo liên tục, hủy các lệnh phát nhạc/tắt nhạc trước đó
+  //   _debounceTimer?.cancel();
+  //   _stopTimer?.cancel();
+
+  //   // Dừng ngay lập tức âm thanh đang phát (nếu có) để tránh chồng âm
+  //   _audioPlayer.stop();
+
+  //   // 2. Bắt đầu đếm ngược 300ms (Thời gian chờ người dùng chốt volume)
+  //   _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
+  //     try {
+  //       // Cấu hình file nhạc (Nếu chưa load thì load lại)
+  //       if (_selectedAudioPath == null) {
+  //         await _audioPlayer.setAsset('assets/Default/alarm_digital.wav');
+  //       } else {
+  //         await _audioPlayer.setFilePath(_selectedAudioPath!);
+  //       }
+
+  //       // double currentSystemVolume = await FlutterVolumeController.getVolume() ?? 1.0;
+  //       // double previewVolume = currentSystemVolume * newVolume;
+
+  //       // Set volume mới
+  //       await _audioPlayer.setVolume(newVolume);
+
+  //       // Phát nhạc
+  //       await _audioPlayer.play();
+
+  //       // 3. Đặt lịch tự động tắt sau 2 giây (3 giây hơi lâu cho việc test volume)
+  //       _stopTimer = Timer(const Duration(seconds: 2), () {
+  //         _audioPlayer.stop();
+  //       });
+  //     } catch (e) {
+  //       debugPrint("Lỗi preview volume: $e");
+  //     }
+  //   });
+  // }
 
   @override
   Widget build(BuildContext context) {
@@ -769,13 +838,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                         divisions: 100,
                         label: "${(_volume * 100).round()}%",
                         activeColor: Colors.blue,
-                        onChanged: (double value) {
-                          if (!mounted) return;
-                          setState(() {
-                            _volume = value;
-                          });
-                          _previewVolume(_volume);
-                        },
+                        onChanged: _onVolumeChanged,
                       ),
                     ),
                     Icon(Icons.volume_up, size: 20, color: Colors.blue),
