@@ -6,6 +6,7 @@ class Note {
   DateTime time;
   bool hasAppointment;
   String? alarmAudioPath;
+  double volume;
 
   Note({
     this.id,
@@ -15,14 +16,9 @@ class Note {
     required this.time,
     this.hasAppointment = true,
     this.alarmAudioPath,
+    this.volume = 1.0,
   }) {
-    time = DateTime(
-      time.year,
-      time.month,
-      time.day,
-      time.hour,
-      time.minute,
-    );
+    time = DateTime(time.year, time.month, time.day, time.hour, time.minute);
   }
 
   Map<String, dynamic> toMap() {
@@ -34,6 +30,7 @@ class Note {
       'time': time.toIso8601String(),
       'has_appointment': hasAppointment ? 1 : 0,
       'alarm_audio_path': alarmAudioPath,
+      'volume': volume,
     };
   }
 
@@ -46,6 +43,12 @@ class Note {
       time: DateTime.parse(map['time']),
       hasAppointment: map['has_appointment'] == 1,
       alarmAudioPath: map['alarm_audio_path'],
+      volume: map['volume'] != null ? (map['volume'] as num).toDouble() : 1.0,
     );
+  }
+
+  bool get isPastAppointment {
+    if (!hasAppointment) return false;
+    return time.isBefore(DateTime.now());
   }
 }

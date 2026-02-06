@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final GlobalKey<ScaffoldMessengerState> messengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -39,7 +40,7 @@ void showPermissionBanner({required VoidCallback onDismiss}) {
   );
 }
 
-void showPermissionDialog(BuildContext context) {
+void showPermissionDialog(BuildContext context, {bool showPermanentDisable = false}) {
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -50,6 +51,15 @@ void showPermissionDialog(BuildContext context) {
         "vui lòng vào Cài đặt > Quyền > Thông báo và bật lên.",
       ),
       actions: [
+        if (showPermanentDisable)
+          TextButton(
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('hide_permission_forever', true);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text("Tắt vĩnh viễn", style: TextStyle(color: Colors.red)),
+          ),
         TextButton(
           onPressed: () => Navigator.pop(ctx),
           child: const Text("Để sau", style: TextStyle(color: Colors.grey)),
