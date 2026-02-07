@@ -88,23 +88,47 @@ class _AlarmScreenState extends State<AlarmScreen>
       return;
     }
 
-    DateTime now = DateTime.now();
-    DateTime newTime = now.add(const Duration(minutes: 5));
-
-    setState(() => _isLoading = true);
-
     try {
-      _currentNote!.time = newTime;
-      _currentNote!.date = newTime;
-      _currentNote!.hasAppointment = true;
+      DateTime newTime = DateTime.now().add(const Duration(minutes: 5));
+
+      // 🔴 Kiểm tra trùng giờ (bỏ qua chính nó)
+      final conflict = await AppointmentService.isTimeConflict(
+        newTime,
+        ignoreNoteId: _currentNote!.id,
+      );
+
+      if (conflict) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Giờ snooze bị trùng với lịch hẹn khác"),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+
+        // Quay về màn hình chính, KHÔNG tạo lại alarm
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const MainScreen()),
+            (Route<dynamic> route) => false,
+          );
+        }
+        return;
+      }
+
+      // ✅ Không trùng → lưu và đặt lại alarm
+      _currentNote!
+        ..time = newTime
+        ..date = newTime
+        ..hasAppointment = true;
 
       await DbConnector.instance.saveNote(_currentNote!);
-
       await AppointmentService.scheduleAppointment(_currentNote!);
 
-      debugPrint("Đã hoãn báo thức 5 phút: ${newTime.toString()}");
+      debugPrint("Snooze thành công: $newTime");
     } catch (e) {
-      debugPrint("Lỗi khi lưu snooze: $e");
+      debugPrint("Lỗi khi snooze: $e");
     }
 
     if (mounted) {
