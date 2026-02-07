@@ -31,7 +31,7 @@ class AppointmentService {
     }
 
     // 4. XỬ LÝ LOGIC ĐƯỜNG DẪN NHẠC (QUAN TRỌNG)
-    String finalAudioPath = 'assets/Default/alarm_digital.wav'; // Mặc định
+    String finalAudioPath = 'assets/Sounds/Default/alarm_digital.wav'; // Mặc định
 
     if (note.alarmAudioPath != null && note.alarmAudioPath!.trim().isNotEmpty) {
       final customFile = File(note.alarmAudioPath!);
