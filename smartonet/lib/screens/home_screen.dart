@@ -11,7 +11,7 @@ import '../services/alarm_service.dart';
 import '../screens/alarm_screen.dart';
 import '../services/audio_service.dart';
 import '../screens/permission_screen.dart';
-import '../utils/permission_banner.dart';
+import '../utils/notification.dart';
 import '../services/permission_service.dart';
 
 class Smartonet extends StatelessWidget {
@@ -50,6 +50,10 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1;
   List<Note> _allNotes = [];
   StreamSubscription<AlarmSet>? _subscription;
+  bool _isSelectionMode = false;
+  final Set<int> _selectedIds = {};
+  String _noteFilter = "all";
+  String _appointmentFilter = "upcoming";
 
   @override
   void initState() {
@@ -160,59 +164,89 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  void _toggleSelectAll(List data) {
+    setState(() {
+      if (_selectedIds.length == data.length) {
+        _selectedIds.clear(); // Bỏ chọn tất cả
+      } else {
+        _selectedIds.clear();
+        for (var n in data) {
+          _selectedIds.add(n.id);
+        }
+      }
+    });
+  }
+
   void _openNoteForm(BuildContext context, {Note? existingNote}) {
     showDialog(
       context: context,
       builder: (context) {
         return NoteFormDialog(
           noteData: existingNote,
-          onSubmit: (title, content, pickedDateTime, audioPath, volume) async {
-            bool hasAppt = pickedDateTime != null;
-            DateTime saveDate = pickedDateTime ?? DateTime.now();
+          onSubmit: (title, content, pickedDate, pickedTime, audioPath, volume) async {
+            final bool hasAppt = pickedTime != null;
+
+            DateTime finalTime;
+            final DateTime now = DateTime.now();
 
             if (hasAppt) {
-              final granted = await PermissionService().isNotificationGranted();
+              // --- TRƯỜNG HỢP: LỊCH HẸN ---
+              // Chắc chắn pickedDate không null nếu pickedTime không null (do logic validate trong Dialog)
+              // Nhưng để an toàn ta dùng "pickedDate ?? now"
+              DateTime baseDate = pickedDate ?? now;
 
-              if (!granted) {
-                final prefs = await SharedPreferences.getInstance();
-                final isHiddenForever =
-                    prefs.getBool('hide_permission_forever') ?? false;
-
-                if (!isHiddenForever && context.mounted) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    showPermissionDialog(context, showPermanentDisable: true);
-                  });
-                }
-              }
-
-              final conflict = await AppointmentService.isTimeConflict(
-                saveDate,
-                ignoreNoteId: existingNote?.id,
+              finalTime = DateTime(
+                baseDate.year,
+                baseDate.month,
+                baseDate.day,
+                pickedTime.hour,
+                pickedTime.minute,
               );
 
-              if (conflict) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("Đã có lịch hẹn khác trùng giờ này"),
-                      behavior: SnackBarBehavior.floating,
-                      margin: EdgeInsets.symmetric(
-                        horizontal: 16,
-                      ), // ❌ không set bottom
-                    ),
-                  );
+              // Kiểm tra trùng giờ...
+              if (finalTime.isAfter(now)) {
+                final conflict = await AppointmentService.isTimeConflict(
+                  finalTime,
+                  ignoreNoteId: existingNote?.id,
+                );
+
+                if (conflict) {
+                  if (context.mounted) await showConflictDialog(context);
+                  return;
                 }
-                return; // ❌ DỪNG, KHÔNG LƯU
+              }
+            } else {
+              // --- TRƯỜNG HỢP: NOTE THƯỜNG (Không báo thức) ---
+
+              if (pickedDate != null) {
+                // A. Người dùng CÓ chọn ngày mới trong form -> Dùng ngày đó
+                // Giữ giờ hiện tại để sort cho hợp lý, hoặc dùng 00:00
+                finalTime = DateTime(
+                  pickedDate.year,
+                  pickedDate.month,
+                  pickedDate.day,
+                  now.hour,
+                  now.minute,
+                );
+              } else if (existingNote != null) {
+                // B. Người dùng KHÔNG chọn ngày mới, đang sửa Note cũ -> Giữ nguyên ngày cũ
+                finalTime = existingNote.time;
+              } else {
+                // C. Tạo mới hoàn toàn và không chọn ngày -> Dùng hôm nay
+                finalTime = now;
               }
             }
 
-            // ✅ CHỈ LƯU SAU KHI KHÔNG TRÙNG
             Note noteToSave = Note(
               id: existingNote?.id,
               title: title,
               content: content,
-              date: saveDate,
-              time: saveDate,
+              date: DateTime(
+                finalTime.year,
+                finalTime.month,
+                finalTime.day,
+              ), // dateOnly
+              time: finalTime,
               hasAppointment: hasAppt,
               alarmAudioPath: audioPath,
               volume: volume,
@@ -221,10 +255,11 @@ class _MainScreenState extends State<MainScreen> {
             int id = await DbConnector.instance.saveNote(noteToSave);
             noteToSave.id = id;
 
-            if (hasAppt) {
+            if (hasAppt && finalTime.isAfter(DateTime.now())) {
               await AppointmentService.scheduleAppointment(noteToSave);
-            } else if (existingNote?.id != null) {
-              await AppointmentService.cancelAlarm(existingNote!.id!);
+            } else if (existingNote != null && existingNote.id != null) {
+              // Nếu sửa từ "Có hẹn" thành "Không hẹn" -> Hủy alarm cũ
+              await AppointmentService.cancelAlarm(existingNote.id!);
             }
 
             await _loadDataFromDB();
@@ -430,8 +465,15 @@ class _MainScreenState extends State<MainScreen> {
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
+        onDestinationSelected: (index) {
+          setState(() {
+            _selectedIndex = index;
+            if (_isSelectionMode) {
+              _isSelectionMode = false;
+              _selectedIds.clear();
+            }
+          });
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.sticky_note_2_outlined),
@@ -535,10 +577,12 @@ class _MainScreenState extends State<MainScreen> {
   // --- DASHBOARD: CHỈNH SỬA LOGIC HIỂN THỊ ---
   Widget _buildDashboard() {
     final upcomingAppointments =
-        _allNotes
-            .where((n) => n.hasAppointment && !n.isPastAppointment)
-            .toList()
-          ..sort((a, b) => a.time.compareTo(b.time));
+        (_allNotes
+                .where((n) => n.hasAppointment && !n.isPastAppointment)
+                .toList()
+              ..sort((a, b) => a.time.compareTo(b.time)))
+            .take(3)
+            .toList();
 
     // 2. Ghi chú: Lấy TOÀN BỘ (bao gồm cả Lịch hẹn, vì Lịch hẹn cũng là một dạng Ghi chú)
     // Sắp xếp theo ID giảm dần (mới nhất lên đầu)
@@ -563,7 +607,7 @@ class _MainScreenState extends State<MainScreen> {
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: upcomingAppointments.take(3).length,
+                  itemCount: upcomingAppointments.length,
                   itemBuilder: (ctx, i) => ReminderCard(
                     title: upcomingAppointments[i].title,
                     content: upcomingAppointments[i].content,
@@ -593,6 +637,7 @@ class _MainScreenState extends State<MainScreen> {
                     title: recentNotes[i].title,
                     content: recentNotes[i].content,
                     date: recentNotes[i].date,
+                    time: recentNotes[i].time,
                     isPastAppointment: recentNotes[i].isPastAppointment,
                     isLinkedAppointment: recentNotes[i].hasAppointment,
                     onEdit: () =>
@@ -617,13 +662,68 @@ class _MainScreenState extends State<MainScreen> {
 
     if (filterOnlyAppointments) {
       // Tab Lịch hẹn: Chỉ hiện cái có giờ
-      data = _allNotes.where((n) => n.hasAppointment).toList()
-        ..sort((a, b) => a.time.compareTo(b.time));
+      final now = DateTime.now();
+
+      switch (_appointmentFilter) {
+        case "today":
+          data = _allNotes
+              .where(
+                (n) =>
+                    n.hasAppointment &&
+                    n.time.year == now.year &&
+                    n.time.month == now.month &&
+                    n.time.day == now.day,
+              )
+              .toList();
+          break;
+
+        case "week":
+          final nextWeek = now.add(const Duration(days: 7));
+          data = _allNotes
+              .where(
+                (n) =>
+                    n.hasAppointment &&
+                    n.time.isAfter(now) &&
+                    n.time.isBefore(nextWeek),
+              )
+              .toList();
+          break;
+
+        case "past":
+          data = _allNotes
+              .where((n) => n.hasAppointment && n.isPastAppointment)
+              .toList();
+          break;
+
+        case "all":
+          data = _allNotes.where((n) => n.hasAppointment).toList();
+          break;
+
+        default: // upcoming
+          data = _allNotes
+              .where((n) => n.hasAppointment && !n.isPastAppointment)
+              .toList();
+      }
+
       title = "Tất cả Lịch hẹn";
       emptyIcon = Icons.notifications_off_outlined;
     } else {
       // Tab Ghi chú: HIỆN TẤT CẢ (Lịch hẹn + Ghi chú thường)
-      data = _allNotes.toList()..sort((a, b) => a.time.compareTo(b.time));
+      switch (_noteFilter) {
+        case "normal":
+          data = _allNotes.where((n) => !n.hasAppointment).toList();
+          break;
+        case "withAppointment":
+          data = _allNotes.where((n) => n.hasAppointment).toList();
+          break;
+        case "pastAppointment":
+          data = _allNotes
+              .where((n) => n.hasAppointment && n.isPastAppointment)
+              .toList();
+          break;
+        default:
+          data = _allNotes.toList();
+      }
       title = "Tất cả Ghi chú";
       emptyIcon = Icons.note_add_outlined;
     }
@@ -633,12 +733,62 @@ class _MainScreenState extends State<MainScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.filter_alt_outlined),
+                tooltip: "Lọc",
+                onPressed: () => _openFilterSheet(),
+              ),
+
+              if (!_isSelectionMode)
+                TextButton(
+                  onPressed: () {
+                    setState(() => _isSelectionMode = true);
+                  },
+                  child: const Text("Chọn"),
+                )
+              else ...[
+                TextButton(
+                  onPressed: () => _toggleSelectAll(data),
+                  child: Text(
+                    _selectedIds.length == data.length
+                        ? "Bỏ chọn hết"
+                        : "Chọn hết",
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                  },
+                  child: const Text("Hủy"),
+                ),
+                TextButton(
+                  onPressed: _selectedIds.isEmpty
+                      ? null
+                      : _handleDeleteMultiple,
+                  child: Text(
+                    "Xóa (${_selectedIds.length})",
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
-        Expanded(
+        Flexible(
           child: data.isEmpty
               ? _buildEmptyState("Danh sách trống", emptyIcon)
               : ListView.builder(
@@ -648,30 +798,111 @@ class _MainScreenState extends State<MainScreen> {
                     final note = data[index];
                     if (filterOnlyAppointments) {
                       // Giao diện Lịch hẹn
-                      return ReminderCard(
-                        title: note.title,
-                        content: note.content,
-                        date: note.date,
-                        time: note.time,
-                        isPast: note.isPastAppointment,
-                        onEdit: () =>
-                            _openNoteForm(context, existingNote: note),
-                        onDelete: () => _handleDelete(note.id!),
+                      return GestureDetector(
+                        onLongPress: () {
+                          if (!_isSelectionMode) {
+                            setState(() {
+                              _isSelectionMode = true;
+                              _selectedIds.add(note.id!);
+                            });
+                          }
+                        },
+                        onTap: () {
+                          if (_isSelectionMode) {
+                            setState(() {
+                              if (_selectedIds.contains(note.id)) {
+                                _selectedIds.remove(note.id);
+                              } else {
+                                _selectedIds.add(note.id!);
+                              }
+                            });
+                          }
+                        },
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildAnimatedCheckbox(note.id!),
+                            Expanded(
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                decoration: BoxDecoration(
+                                  color: _selectedIds.contains(note.id)
+                                      ? Colors.blue.withValues(alpha: 0.08)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: ReminderCard(
+                                  title: note.title,
+                                  content: note.content,
+                                  date: note.date,
+                                  time: note.time,
+                                  isPast: note.isPastAppointment,
+                                  onEdit: () => _openNoteForm(
+                                    context,
+                                    existingNote: note,
+                                  ),
+                                  onDelete: () => _handleDelete(note.id!),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       );
                     } else {
                       // Giao diện Ghi chú (Dùng cho cả Note thường và Lịch hẹn trong tab này)
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
-                        child: NoteCard(
-                          title: note.title,
-                          content: note.content,
-                          date: note.date,
-                          isFullWidth: true,
-                          isLinkedAppointment: note.hasAppointment,
-                          isPastAppointment: note.isPastAppointment,
-                          onEdit: () =>
-                              _openNoteForm(context, existingNote: note),
-                          onDelete: () => _handleDelete(note.id!),
+                        child: GestureDetector(
+                          onLongPress: () {
+                            if (!_isSelectionMode) {
+                              setState(() {
+                                _isSelectionMode = true;
+                                _selectedIds.add(note.id!);
+                              });
+                            }
+                          },
+                          onTap: () {
+                            if (_isSelectionMode) {
+                              setState(() {
+                                if (_selectedIds.contains(note.id)) {
+                                  _selectedIds.remove(note.id);
+                                } else {
+                                  _selectedIds.add(note.id!);
+                                }
+                              });
+                            }
+                          },
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildAnimatedCheckbox(note.id!),
+                              Expanded(
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  decoration: BoxDecoration(
+                                    color: _selectedIds.contains(note.id)
+                                        ? Colors.blue.withValues(alpha: 0.08)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: NoteCard(
+                                    title: note.title,
+                                    content: note.content,
+                                    date: note.dateOnly,
+                                    time: note.time,
+                                    isFullWidth: true,
+                                    isLinkedAppointment: note.hasAppointment,
+                                    isPastAppointment: note.isPastAppointment,
+                                    onEdit: () => _openNoteForm(
+                                      context,
+                                      existingNote: note,
+                                    ),
+                                    onDelete: () => _handleDelete(note.id!),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     }
@@ -680,6 +911,166 @@ class _MainScreenState extends State<MainScreen> {
         ),
       ],
     );
+  }
+
+  void _openFilterSheet() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return _selectedIndex == 0
+            ? _buildNoteFilterOptions()
+            : _buildAppointmentFilterOptions();
+      },
+    );
+
+    if (result != null) {
+      setState(() {
+        if (_selectedIndex == 0) {
+          _noteFilter = result;
+        } else if (_selectedIndex == 2) {
+          _appointmentFilter = result;
+        }
+      });
+    }
+  }
+
+  Widget _buildNoteFilterOptions() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          title: const Text("Tất cả"),
+          trailing: _noteFilter == "all"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "all"),
+        ),
+        ListTile(
+          title: const Text("Ghi chú thường"),
+          trailing: _noteFilter == "normal"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "normal"),
+        ),
+        ListTile(
+          title: const Text("Có lịch hẹn"),
+          trailing: _noteFilter == "withAppointment"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "withAppointment"),
+        ),
+        ListTile(
+          title: const Text("Lịch hẹn đã qua"),
+          trailing: _noteFilter == "pastAppointment"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "pastAppointment"),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAppointmentFilterOptions() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          title: const Text("Tất cả"),
+          trailing: _appointmentFilter == "all"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "all"),
+        ),
+        ListTile(
+          title: const Text("Sắp tới"),
+          trailing: _appointmentFilter == "upcoming"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "upcoming"),
+        ),
+        ListTile(
+          title: const Text("Hôm nay"),
+          trailing: _appointmentFilter == "today"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "today"),
+        ),
+        ListTile(
+          title: const Text("7 ngày tới"),
+          trailing: _appointmentFilter == "week"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "week"),
+        ),
+        ListTile(
+          title: const Text("Đã qua"),
+          trailing: _appointmentFilter == "past"
+              ? const Icon(Icons.check, color: Colors.green)
+              : null,
+          onTap: () => Navigator.pop(context, "past"),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAnimatedCheckbox(int id) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      width: _isSelectionMode ? 40 : 0,
+      child: _isSelectionMode
+          ? Checkbox(
+              value: _selectedIds.contains(id),
+              onChanged: (val) {
+                setState(() {
+                  if (val == true) {
+                    _selectedIds.add(id);
+                  } else {
+                    _selectedIds.remove(id);
+                  }
+                });
+              },
+            )
+          : null,
+    );
+  }
+
+  Future<void> _handleDeleteMultiple() async {
+    bool confirm =
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Xác nhận xóa"),
+            content: Text(
+              "Bạn sắp xóa ${_selectedIds.length} mục. Hành động này không thể hoàn tác.",
+            ),
+            actions: [
+              TextButton(
+                child: const Text("Hủy"),
+                onPressed: () => Navigator.pop(ctx, false),
+              ),
+              TextButton(
+                child: const Text("Xóa", style: TextStyle(color: Colors.red)),
+                onPressed: () => Navigator.pop(ctx, true),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirm) return;
+
+    for (final id in _selectedIds) {
+      await AppointmentService.cancelAlarm(id);
+      await DbConnector.instance.deleteNote(id);
+    }
+
+    setState(() {
+      _isSelectionMode = false;
+      _selectedIds.clear();
+    });
+
+    _loadDataFromDB();
   }
 
   Widget _buildEmptyState(String message, IconData icon) {
@@ -701,7 +1092,8 @@ class NoteFormDialog extends StatefulWidget {
   final Function(
     String title,
     String content,
-    DateTime? scheduledTime,
+    DateTime? pickedDate,
+    TimeOfDay? pickedTime,
     String? audioPath,
     double volume,
   )
@@ -727,6 +1119,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
   String _defaultTitle = "Ghi chú mới";
   bool _isUsingDefaultTitle = true;
   late DateTime _defaultDate;
+  String? _timeError;
 
   @override
   void initState() {
@@ -757,20 +1150,29 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
 
     _defaultDate = DateTime.now();
 
-    if (widget.noteData != null && widget.noteData!.hasAppointment) {
-      _selectedDate = widget.noteData!.date;
+    if (widget.noteData != null) {
+      final note = widget.noteData!;
+
+      _selectedAudioPath = note.alarmAudioPath;
+      _volume = note.volume;
+
+      if (note.hasAppointment) {
+        final dt = note.time;
+        _selectedDate = DateTime(dt.year, dt.month, dt.day);
+        _selectedTime = TimeOfDay(hour: dt.hour, minute: dt.minute);
+      } else {
+        // ⭐ NOTE THƯỜNG → giữ ngày cũ từ time, KHÔNG dùng DateTime.now()
+        final dt = note.time;
+        _selectedDate = DateTime(dt.year, dt.month, dt.day);
+        _selectedTime = null; // không có giờ hẹn
+      }
     } else {
+      // NOTE MỚI
       _selectedDate = _defaultDate;
     }
 
     AudioService().init();
 
-    if (widget.noteData != null && widget.noteData!.hasAppointment) {
-      _selectedDate = widget.noteData!.date;
-      _selectedTime = TimeOfDay.fromDateTime(widget.noteData!.time);
-      _selectedAudioPath = widget.noteData?.alarmAudioPath;
-      _volume = widget.noteData?.volume ?? 0.5;
-    }
     _initVolumeController();
   }
 
@@ -801,6 +1203,37 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
       setState(() {
         _titleCtrl.text = _defaultTitle;
       });
+    }
+  }
+
+  void _validatePickedDateTime() {
+    if (_selectedDate == null || _selectedTime == null) {
+      _timeError = null;
+      return;
+    }
+
+    final picked = DateTime(
+      _selectedDate!.year,
+      _selectedDate!.month,
+      _selectedDate!.day,
+      _selectedTime!.hour,
+      _selectedTime!.minute,
+    );
+
+    final now = DateTime.now();
+
+    final nowRounded = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      now.hour,
+      now.minute,
+    );
+
+    if (picked.isBefore(nowRounded)) {
+      _timeError = "Thời gian được chọn đã trôi qua";
+    } else {
+      _timeError = null;
     }
   }
 
@@ -1017,7 +1450,18 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 0),
+              if (_timeError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _timeError!,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(
@@ -1039,6 +1483,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                         if (d != null) {
                           setState(() {
                             _selectedDate = d;
+                            _validatePickedDateTime();
                           });
                         }
                       },
@@ -1061,8 +1506,9 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                         if (t != null) {
                           setState(() {
                             _selectedTime = t;
+                            _validatePickedDateTime();
+                            _updateDefaultTitleBasedOnTime();
                           });
-                          _updateDefaultTitleBasedOnTime();
                         }
                       },
                     ),
@@ -1073,6 +1519,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       onPressed: () => setState(() {
                         _selectedTime = null;
                         _selectedAudioPath = null;
+                        _timeError = null;
                         _updateDefaultTitleBasedOnTime();
                       }),
                     ),
@@ -1164,35 +1611,31 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                     String finalTitle = _titleCtrl.text.trim().isEmpty
                         ? _defaultTitle
                         : _titleCtrl.text.trim();
+
                     _debounceTimer?.cancel();
                     _stopTimer?.cancel();
+
                     if (_isPreviewPlaying) {
                       await AudioService().stopPreview();
                       _isPreviewPlaying = false;
                     }
+
                     if (_originalSystemVolume != null) {
                       await FlutterVolumeController.setVolume(
                         _originalSystemVolume!,
                         stream: AudioStream.alarm,
                       );
                     }
-                    DateTime? finalDT;
-                    if (_selectedDate != null && _selectedTime != null) {
-                      finalDT = DateTime(
-                        _selectedDate!.year,
-                        _selectedDate!.month,
-                        _selectedDate!.day,
-                        _selectedTime!.hour,
-                        _selectedTime!.minute,
-                      );
-                    }
+
                     widget.onSubmit(
                       finalTitle,
                       _contentCtrl.text,
-                      finalDT,
+                      _selectedDate,
+                      _selectedTime,
                       _selectedAudioPath,
                       _volume,
                     );
+
                     if (context.mounted) {
                       Navigator.pop(context);
                     }
@@ -1268,6 +1711,8 @@ class ReminderCard extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
@@ -1286,7 +1731,7 @@ class ReminderCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              "${date.day}/${date.month} • ${time.hour}:${time.minute.toString().padLeft(2, '0')}",
+              "${date.day}/${date.month} • ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}",
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.blue,
@@ -1323,6 +1768,7 @@ class ReminderCard extends StatelessWidget {
 class NoteCard extends StatelessWidget {
   final String title, content;
   final DateTime? date;
+  final DateTime? time;
   final bool isFullWidth;
   final bool isLinkedAppointment;
   final VoidCallback? onEdit, onDelete;
@@ -1333,6 +1779,7 @@ class NoteCard extends StatelessWidget {
     required this.title,
     required this.content,
     this.date,
+    this.time,
     this.isFullWidth = false,
     this.isLinkedAppointment = false,
     this.onEdit,
@@ -1343,10 +1790,23 @@ class NoteCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     String timeStr = "";
-    if (date != null) {
-      final hour = date!.hour.toString().padLeft(2, '0');
-      final minute = date!.minute.toString().padLeft(2, '0');
-      timeStr = "$hour:$minute   ${date!.day}/${date!.month}";
+    if (date != null && time != null) {
+      if (isLinkedAppointment) {
+        // TRƯỜNG HỢP 1: LỊCH HẸN -> Hiện Giờ báo thức + Ngày hẹn
+        final hour = time!.hour.toString().padLeft(2, '0');
+        final minute = time!.minute.toString().padLeft(2, '0');
+        timeStr = "$hour:$minute • ${date!.day}/${date!.month}";
+      } else {
+        // TRƯỜNG HỢP 2: GHI CHÚ THƯỜNG
+        // Chỉ hiện Ngày người dùng chọn.
+        // Giờ tạo (time) dùng để sắp xếp nhưng KHÔNG hiển thị để tránh rối.
+        timeStr = "Ngày: ${date!.day}/${date!.month}";
+
+        // Nếu bạn VẪN MUỐN hiện giờ tạo, hãy dùng định dạng khác hẳn:
+        // final hour = time!.hour.toString().padLeft(2, '0');
+        // final minute = time!.minute.toString().padLeft(2, '0');
+        // timeStr = "${date!.day}/${date!.month} (Tạo lúc $hour:$minute)";
+      }
     }
 
     return Card(
@@ -1361,13 +1821,16 @@ class NoteCard extends StatelessWidget {
           children: [
             // --- HÀNG TRÊN CÙNG: Badge + Ngày giờ + Nút bấm ---
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Cụm bên trái: Badge + Ngày giờ
+                // ====== BÊN TRÁI: BADGE + TIME ======
                 Expanded(
-                  child: Row(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      // Badge (Note/Có hẹn)
+                      // Badge Note / Có hẹn
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -1390,8 +1853,9 @@ class NoteCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (isPastAppointment) ...[
-                        const SizedBox(width: 6),
+
+                      // Badge Đã qua
+                      if (isPastAppointment)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 6,
@@ -1406,34 +1870,40 @@ class NoteCard extends StatelessWidget {
                             style: TextStyle(fontSize: 10),
                           ),
                         ),
-                      ],
-                      // Hiển thị Ngày giờ (Nếu có)
+
+                      // Thời gian
                       if (date != null) ...[
-                        const SizedBox(width: 5),
-                        Icon(
-                          Icons.access_time,
-                          size: 12,
-                          color: Colors.grey.shade500,
-                        ),
-                        const SizedBox(width: 2),
-                        Flexible(
-                          child: Text(
-                            timeStr,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.w500,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.access_time,
+                              size: 12,
+                              color: Colors.grey.shade500,
                             ),
-                          ),
+                            const SizedBox(width: 2),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 110),
+                              child: Text(
+                                timeStr,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ],
                   ),
                 ),
 
-                // Cụm bên phải: Nút Sửa/Xóa
+                // ====== BÊN PHẢI: NÚT SỬA / XOÁ ======
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     if (onEdit != null)
                       InkWell(
@@ -1444,8 +1914,8 @@ class NoteCard extends StatelessWidget {
                           color: Colors.orange,
                         ),
                       ),
-                    const SizedBox(width: 8),
-                    if (onDelete != null)
+                    if (onDelete != null) ...[
+                      const SizedBox(width: 8),
                       InkWell(
                         onTap: onDelete,
                         child: const Icon(
@@ -1454,6 +1924,7 @@ class NoteCard extends StatelessWidget {
                           color: Colors.red,
                         ),
                       ),
+                    ],
                   ],
                 ),
               ],
@@ -1471,7 +1942,7 @@ class NoteCard extends StatelessWidget {
             // --- NỘI DUNG ---
             Text(
               content,
-              maxLines: isFullWidth ? 3 : 5,
+              maxLines: isFullWidth ? 5 : 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
             ),
