@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:alarm/alarm.dart';
 import 'package:logging/logging.dart';
+import 'package:smartonet/services/dbconnector.dart';
 import '../database/models.dart';
 import 'audio_service.dart';
 
@@ -54,8 +55,10 @@ class AppointmentService {
       vibrate: true, // Rung
       volumeSettings: VolumeSettings.fade(
         volume: note.volume,
-        fadeDuration: const Duration(seconds: 5), // Fade in 3 giây cho đỡ giật mình
-        volumeEnforced: true // Bắt buộc âm lượng tối đa
+        fadeDuration: const Duration(
+          seconds: 5,
+        ), // Fade in 3 giây cho đỡ giật mình
+        volumeEnforced: true, // Bắt buộc âm lượng tối đa
       ),
       notificationSettings: NotificationSettings(
         title: note.title,
@@ -65,14 +68,43 @@ class AppointmentService {
       ),
       // Quan trọng cho Android: Hiện màn hình full kể cả khi khóa máy
       androidFullScreenIntent: true,
-      warningNotificationOnKill: false, 
+      warningNotificationOnKill: false,
     );
 
     // 6. Dừng báo thức cũ (nếu có trùng ID) trước khi đặt mới
     await Alarm.stop(note.id!);
-    
+
     // 7. Đặt báo thức mới
     return await Alarm.set(alarmSettings: alarmSettings);
+  }
+
+  static Future<bool> isTimeConflict(DateTime time, {int? ignoreNoteId}) async {
+    final notes = await DbConnector.instance.getAllNotes();
+
+    for (final note in notes) {
+      if (!note.hasAppointment) continue;
+      if (ignoreNoteId != null && note.id == ignoreNoteId) continue;
+
+      final noteDateTime = DateTime(
+        note.date.year,
+        note.date.month,
+        note.date.day,
+        note.time.hour,
+        note.time.minute,
+        note.time.second,
+      );
+
+      if (noteDateTime.year == time.year &&
+          noteDateTime.month == time.month &&
+          noteDateTime.day == time.day &&
+          noteDateTime.hour == time.hour &&
+          noteDateTime.minute == time.minute &&
+          noteDateTime.second == time.second) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // Hàm hủy/dừng báo thức
@@ -80,7 +112,7 @@ class AppointmentService {
     try {
       // Dừng nhạc preview (nếu lỡ đang phát)
       await AudioService().stopPreview();
-      
+
       // Dừng báo thức hệ thống
       return await Alarm.stop(id);
     } catch (e) {
