@@ -1271,7 +1271,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
         stream: AudioStream.alarm,
       );
 
-      String source = _selectedAudioPath ?? 'assets/Default/alarm_digital.wav';
+      String source = _selectedAudioPath ?? 'assets/Sounds/Default/alarm_digital.wav';
       AudioService().playPreview(source: source);
       _isPreviewPlaying = true;
 

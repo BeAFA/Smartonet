@@ -54,7 +54,8 @@ class AudioService {
             await _player.setFilePath(source);
          } else {
             // Fallback nếu file lỗi -> Chạy nhạc mặc định
-            await _player.setAsset('assets/Default/alarm_digital.wav');
+            await _player.setAsset('assets/Sounds/Default/alarm_digital.wav');
+            
          }
       } else {
         // Nếu là asset
