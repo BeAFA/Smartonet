@@ -170,6 +170,43 @@ class _MainScreenState extends State<MainScreen> {
             bool hasAppt = pickedDateTime != null;
             DateTime saveDate = pickedDateTime ?? DateTime.now();
 
+            if (hasAppt) {
+              final granted = await PermissionService().isNotificationGranted();
+
+              if (!granted) {
+                final prefs = await SharedPreferences.getInstance();
+                final isHiddenForever =
+                    prefs.getBool('hide_permission_forever') ?? false;
+
+                if (!isHiddenForever && context.mounted) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    showPermissionDialog(context, showPermanentDisable: true);
+                  });
+                }
+              }
+
+              final conflict = await AppointmentService.isTimeConflict(
+                saveDate,
+                ignoreNoteId: existingNote?.id,
+              );
+
+              if (conflict) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Đã có lịch hẹn khác trùng giờ này"),
+                      behavior: SnackBarBehavior.floating,
+                      margin: EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ), // ❌ không set bottom
+                    ),
+                  );
+                }
+                return; // ❌ DỪNG, KHÔNG LƯU
+              }
+            }
+
+            // ✅ CHỈ LƯU SAU KHI KHÔNG TRÙNG
             Note noteToSave = Note(
               id: existingNote?.id,
               title: title,
@@ -185,25 +222,11 @@ class _MainScreenState extends State<MainScreen> {
             noteToSave.id = id;
 
             if (hasAppt) {
-              final granted = await PermissionService().isNotificationGranted();
-
-              if (!granted) {
-                final prefs = await SharedPreferences.getInstance();
-                final isHiddenForever =
-                    prefs.getBool('hide_permission_forever') ?? false;
-
-                if (!isHiddenForever && context.mounted) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    showPermissionDialog(context, showPermanentDisable: true);
-                  });
-                }
-              }
               await AppointmentService.scheduleAppointment(noteToSave);
-            } else {
-              if (existingNote != null && existingNote.id != null) {
-                await AppointmentService.cancelAlarm(existingNote.id!);
-              }
+            } else if (existingNote?.id != null) {
+              await AppointmentService.cancelAlarm(existingNote!.id!);
             }
+
             await _loadDataFromDB();
           },
         );
@@ -220,12 +243,171 @@ class _MainScreenState extends State<MainScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
         ),
         actions: [
-          IconButton(
+          PopupMenuButton<int>(
             icon: const Icon(Icons.notifications_outlined),
-            onPressed: () {
-              _openRecentAppointments;
+            tooltip: 'Lịch sử báo thức',
+            offset: const Offset(0, 40),
+            elevation: 0,
+            color: Colors.transparent, // vẫn để trong suốt
+            itemBuilder: (context) {
+              final recent = _getRecentPastAppointments();
+
+              return [
+                PopupMenuItem<int>(
+                  enabled: false,
+                  padding: EdgeInsets.zero, // QUAN TRỌNG
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxHeight: 350, // 👈 Giới hạn chiều cao menu
+                    ),
+                    child: Container(
+                      width: 320,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.15),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: recent.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                child: Text(
+                                  "Chưa có lịch hẹn đã qua",
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            )
+                          : Scrollbar(
+                              // 👈 thêm scroll cho đẹp
+                              child: ListView(
+                                shrinkWrap: true,
+                                padding: EdgeInsets.zero,
+                                children: recent.map((note) {
+                                  return InkWell(
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      _openNoteForm(
+                                        context,
+                                        existingNote: note,
+                                      );
+                                    },
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.grey.shade200,
+                                          width: 1,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(
+                                              alpha: 0.08,
+                                            ),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                width: 4,
+                                                height: 16,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.orange,
+                                                  borderRadius:
+                                                      BorderRadius.circular(2),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  note.title,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 15,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.orange.shade50,
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons.access_time_filled,
+                                                  size: 14,
+                                                  color: Colors.blue,
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  "${note.date.day}/${note.date.month} • ${note.time.hour}:${note.time.minute.toString().padLeft(2, '0')}",
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.blue,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          if (note.content.isNotEmpty) ...[
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              note.content,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.grey.shade600,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ];
             },
           ),
+
           const SizedBox(width: 8),
           const CircleAvatar(
             backgroundColor: Color(0xFF448AFF),
@@ -245,7 +427,7 @@ class _MainScreenState extends State<MainScreen> {
         ],
       ),
       floatingActionButton: _buildCustomFAB(context),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) =>
@@ -274,168 +456,77 @@ class _MainScreenState extends State<MainScreen> {
   List<Note> _getRecentPastAppointments() {
     final past =
         _allNotes.where((n) => n.hasAppointment && n.isPastAppointment).toList()
-          ..sort((a, b) => b.time.compareTo(a.time)); // mới nhất trước
+          ..sort((a, b) => b.time.compareTo(a.time));
 
     return past.take(10).toList();
   }
 
-  void _openRecentAppointments() {
-    final recent = _getRecentPastAppointments();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          expand: false,
-          builder: (context, controller) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Center(
-                    child: Text(
-                      "10 lịch hẹn gần đây",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (recent.isEmpty)
-                    Expanded(
-                      child: Center(
-                        child: Text(
-                          "Chưa có lịch hẹn nào đã qua",
-                          style: TextStyle(color: Colors.grey.shade500),
-                        ),
-                      ),
-                    )
-                  else
-                    Expanded(
-                      child: ListView.separated(
-                        controller: controller,
-                        itemCount: recent.length,
-                        separatorBuilder: (_, __) =>
-                            Divider(color: Colors.grey.shade200),
-                        itemBuilder: (context, i) {
-                          final n = recent[i];
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              n.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "${n.date.day}/${n.date.month} ${n.time.hour}:${n.time.minute.toString().padLeft(2, '0')}",
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                if (n.content.isNotEmpty)
-                                  Text(
-                                    n.content,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildCustomFAB(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 50),
-      height: 55,
-      width: 220,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black26,
-            blurRadius: 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: const Color(0xFFE8EAF6),
-        borderRadius: BorderRadius.circular(30),
-        clipBehavior: Clip.hardEdge,
-        child: Row(
-          children: [
-            Expanded(
-              child: InkWell(
-                onTap: () => _openNoteForm(context),
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.edit, color: Color(0xFF3F51B5), size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        "Thủ công",
-                        style: TextStyle(
-                          color: Color(0xFF3F51B5),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Container(width: 1, height: 30, color: Colors.grey),
-            Expanded(
-              child: InkWell(
-                onTap: () {},
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.mic, color: Colors.redAccent, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        "Giọng nói",
-                        style: TextStyle(
-                          color: Colors.redAccent,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+    return SafeArea(
+      child: Container(
+        height: 55,
+        width: 220,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 6,
+              offset: const Offset(0, 3),
             ),
           ],
+        ),
+        child: Material(
+          color: const Color(0xFFE8EAF6),
+          borderRadius: BorderRadius.circular(30),
+          clipBehavior: Clip.hardEdge,
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => _openNoteForm(context),
+                  child: const Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.edit, color: Color(0xFF3F51B5), size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          "Thủ công",
+                          style: TextStyle(
+                            color: Color(0xFF3F51B5),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Container(width: 1, height: 30, color: Colors.grey),
+              Expanded(
+                child: InkWell(
+                  onTap: () {},
+                  child: const Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.mic, color: Colors.redAccent, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          "Giọng nói",
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -452,7 +543,7 @@ class _MainScreenState extends State<MainScreen> {
     // 2. Ghi chú: Lấy TOÀN BỘ (bao gồm cả Lịch hẹn, vì Lịch hẹn cũng là một dạng Ghi chú)
     // Sắp xếp theo ID giảm dần (mới nhất lên đầu)
     final recentNotes = _allNotes.toList()
-      ..sort((a, b) => a.time.compareTo(b.time));
+      ..sort((a, b) => b.time.compareTo(a.time));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -765,6 +856,89 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     return _selectedAudioPath!.split('/').last;
   }
 
+  void _openFullEditor(BuildContext context) {
+    final tempController = TextEditingController(text: _contentCtrl.text);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 16,
+            right: 16,
+            top: 16,
+          ),
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.85,
+            child: Column(
+              children: [
+                // Thanh kéo
+                Container(
+                  width: 40,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+
+                const Text(
+                  "Soạn nội dung",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Ô nhập lớn
+                Expanded(
+                  child: TextField(
+                    controller: tempController,
+                    maxLines: null,
+                    expands: true,
+                    textAlignVertical: TextAlignVertical.top,
+                    decoration: InputDecoration(
+                      hintText: "Nhập nội dung chi tiết...",
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Nút lưu
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _contentCtrl.text = tempController.text;
+                      });
+                      Navigator.pop(context);
+                    },
+                    child: const Text("Lưu nội dung"),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     bool showMusicOption = _selectedDate != null && _selectedTime != null;
@@ -796,15 +970,41 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                 ),
               ),
               const SizedBox(height: 15),
-              TextField(
-                controller: _contentCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'Nội dung',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+              Stack(
+                children: [
+                  TextField(
+                    controller: _contentCtrl,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: "Nội dung ghi chú...",
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.fromLTRB(12, 12, 48, 12),
+                    ),
                   ),
-                ),
+
+                  // ✏️ Nút tròn góc phải
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Material(
+                      color: Colors.blue.shade50,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () => _openFullEditor(context),
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.edit, size: 18, color: Colors.blue),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 15),
               const Align(
@@ -961,7 +1161,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                 child: FilledButton(
                   child: const Text("Lưu"),
                   onPressed: () async {
-                    String finalTitle = _isUsingDefaultTitle
+                    String finalTitle = _titleCtrl.text.trim().isEmpty
                         ? _defaultTitle
                         : _titleCtrl.text.trim();
                     _debounceTimer?.cancel();
