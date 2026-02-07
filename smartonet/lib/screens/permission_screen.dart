@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:smartonet/utils/permission_banner.dart';
+import 'package:smartonet/utils/notification.dart';
 import '../services/permission_service.dart';
 import './home_screen.dart';
 

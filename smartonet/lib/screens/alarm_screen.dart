@@ -5,6 +5,7 @@ import '../database/models.dart';
 import '../services/alarm_service.dart';
 import '../services/dbconnector.dart';
 import '../screens/home_screen.dart';
+import '../utils/notification.dart';
 
 class AlarmScreen extends StatefulWidget {
   final AlarmSettings alarmSettings;
@@ -91,7 +92,6 @@ class _AlarmScreenState extends State<AlarmScreen>
     try {
       DateTime newTime = DateTime.now().add(const Duration(minutes: 5));
 
-      // 🔴 Kiểm tra trùng giờ (bỏ qua chính nó)
       final conflict = await AppointmentService.isTimeConflict(
         newTime,
         ignoreNoteId: _currentNote!.id,
@@ -99,15 +99,9 @@ class _AlarmScreenState extends State<AlarmScreen>
 
       if (conflict) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Giờ snooze bị trùng với lịch hẹn khác"),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
+          await showConflictDialog(context);
         }
 
-        // Quay về màn hình chính, KHÔNG tạo lại alarm
         if (mounted) {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (context) => const MainScreen()),

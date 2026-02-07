@@ -40,7 +40,10 @@ void showPermissionBanner({required VoidCallback onDismiss}) {
   );
 }
 
-void showPermissionDialog(BuildContext context, {bool showPermanentDisable = false}) {
+void showPermissionDialog(
+  BuildContext context, {
+  bool showPermanentDisable = false,
+}) {
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -58,7 +61,10 @@ void showPermissionDialog(BuildContext context, {bool showPermanentDisable = fal
               await prefs.setBool('hide_permission_forever', true);
               if (ctx.mounted) Navigator.pop(ctx);
             },
-            child: const Text("Tắt vĩnh viễn", style: TextStyle(color: Colors.red)),
+            child: const Text(
+              "Tắt vĩnh viễn",
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         TextButton(
           onPressed: () => Navigator.pop(ctx),
@@ -73,6 +79,24 @@ void showPermissionDialog(BuildContext context, {bool showPermanentDisable = fal
             "Mở Cài đặt",
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> showConflictDialog(BuildContext context) async {
+  await showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text("Trùng lịch hẹn"),
+      content: const Text(
+        "Đã tồn tại một lịch hẹn khác vào đúng thời điểm này.\nVui lòng chọn thời gian khác.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text("OK"),
         ),
       ],
     ),

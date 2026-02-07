@@ -78,28 +78,36 @@ class AppointmentService {
     return await Alarm.set(alarmSettings: alarmSettings);
   }
 
-  static Future<bool> isTimeConflict(DateTime time, {int? ignoreNoteId}) async {
+  static Future<bool> isTimeConflict(
+    DateTime newTime, {
+    int? ignoreNoteId,
+  }) async {
     final notes = await DbConnector.instance.getAllNotes();
+
+    final compareTime = DateTime(
+      newTime.year,
+      newTime.month,
+      newTime.day,
+      newTime.hour,
+      newTime.minute,
+    ); // ⚠️ bỏ giây
 
     for (final note in notes) {
       if (!note.hasAppointment) continue;
       if (ignoreNoteId != null && note.id == ignoreNoteId) continue;
+      if (note.isPastAppointment) continue;
 
-      final noteDateTime = DateTime(
+      final noteTime = DateTime(
         note.date.year,
         note.date.month,
         note.date.day,
         note.time.hour,
         note.time.minute,
-        note.time.second,
-      );
+      ); // ⚠️ bỏ giây
 
-      if (noteDateTime.year == time.year &&
-          noteDateTime.month == time.month &&
-          noteDateTime.day == time.day &&
-          noteDateTime.hour == time.hour &&
-          noteDateTime.minute == time.minute &&
-          noteDateTime.second == time.second) {
+      final diff = noteTime.difference(compareTime).inMinutes.abs();
+
+      if (diff == 0) {
         return true;
       }
     }
