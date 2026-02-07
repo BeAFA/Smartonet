@@ -1291,6 +1291,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
 
   void _openFullEditor(BuildContext context) {
     final tempController = TextEditingController(text: _contentCtrl.text);
+    final tempTitleController = TextEditingController(text: _titleCtrl.text);
 
     showModalBottomSheet(
       context: context,
@@ -1329,6 +1330,19 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
 
                 const SizedBox(height: 12),
 
+                TextField(
+                  controller: tempTitleController,
+                  decoration: InputDecoration(
+                    labelText: "Tiêu đề",
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Icon(Icons.title),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
                 // Ô nhập lớn
                 Expanded(
                   child: TextField(
@@ -1356,6 +1370,14 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                   child: FilledButton(
                     onPressed: () {
                       setState(() {
+                        final newTitle = tempTitleController.text.trim();
+                        if (newTitle.isEmpty) {
+                          _titleCtrl.text = _defaultTitle;
+                          _isUsingDefaultTitle = true;
+                        } else {
+                          _titleCtrl.text = newTitle;
+                          _isUsingDefaultTitle = false;
+                        }
                         _contentCtrl.text = tempController.text;
                       });
                       Navigator.pop(context);
