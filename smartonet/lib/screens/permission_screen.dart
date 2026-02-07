@@ -247,7 +247,6 @@ class _PermissionScreenState extends State<PermissionScreen>
                   _bullet("Cho phép tự động khởi chạy"),
                   _bullet("Cho phép hiển thị trên màn hình khóa"),
                   _bullet("Cho phép chạy dưới nền"),
-                  _bullet("Bật tối ưu hóa pin cho ứng dụng"),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
