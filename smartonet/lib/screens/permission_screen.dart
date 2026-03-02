@@ -76,7 +76,7 @@ class _PermissionScreenState extends State<PermissionScreen>
     } else {
       if (!_checkBannerVisible) {
         _checkBannerVisible = true;
-        showPermissionBanner(
+        showNotificationPermissionBanner(
           onDismiss: () {
             _checkBannerVisible = false;
           },
@@ -139,7 +139,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                             .requestNotification();
                         if (granted.isPermanentlyDenied) {
                           if (!context.mounted) return;
-                          showPermissionDialog(context);
+                          showNotificationPermissionDialog(context);
                         }
                       },
               ),
@@ -178,7 +178,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                             .requestExactAlarm();
                         if (status.isPermanentlyDenied || status.isDenied) {
                           if (!context.mounted) return;
-                          showPermissionBanner(
+                          showNotificationPermissionBanner(
                             onDismiss: () {
                               _checkBannerVisible = false;
                             },
