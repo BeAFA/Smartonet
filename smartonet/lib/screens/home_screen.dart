@@ -122,7 +122,7 @@ class _MainScreenState extends State<MainScreen> {
     final granted = await PermissionService().isNotificationGranted();
     if (!granted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        showPermissionDialog(context, showPermanentDisable: true);
+        showNotificationPermissionDialog(context, showPermanentDisable: true);
       });
     }
   }

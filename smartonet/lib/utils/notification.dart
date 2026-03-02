@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 final GlobalKey<ScaffoldMessengerState> messengerKey =
     GlobalKey<ScaffoldMessengerState>();
 
-void showPermissionBanner({required VoidCallback onDismiss}) {
+void showNotificationPermissionBanner({required VoidCallback onDismiss}) {
   messengerKey.currentState?.removeCurrentMaterialBanner();
   messengerKey.currentState?.showMaterialBanner(
     MaterialBanner(
@@ -40,7 +40,7 @@ void showPermissionBanner({required VoidCallback onDismiss}) {
   );
 }
 
-void showPermissionDialog(
+void showNotificationPermissionDialog(
   BuildContext context, {
   bool showPermanentDisable = false,
 }) {
