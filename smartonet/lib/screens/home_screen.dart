@@ -278,6 +278,16 @@ class _MainScreenState extends State<MainScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.library_music_outlined),
+            tooltip: 'Kho nhạc',
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => const MusicLibraryDialog(),
+              );
+            },
+          ),
           PopupMenuButton<int>(
             icon: const Icon(Icons.notifications_outlined),
             tooltip: 'Lịch sử báo thức',
@@ -1271,7 +1281,8 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
         stream: AudioStream.alarm,
       );
 
-      String source = _selectedAudioPath ?? 'assets/Sounds/Default/alarm_digital.wav';
+      String source =
+          _selectedAudioPath ?? 'assets/Sounds/Default/alarm_digital.wav';
       AudioService().playPreview(source: source);
       _isPreviewPlaying = true;
 
@@ -1282,11 +1293,26 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     });
   }
 
+  // String _getAudioDisplayName() {
+  //   if (_selectedAudioPath == null) {
+  //     return "Mặc định hệ thống";
+  //   }
+  //   return _selectedAudioPath!.split('/').last;
+  // }
+
   String _getAudioDisplayName() {
     if (_selectedAudioPath == null) {
       return "Mặc định hệ thống";
     }
-    return _selectedAudioPath!.split('/').last;
+    String name = _selectedAudioPath!.split('/').last;
+    // Cắt bỏ timestamp nếu là nhạc do người dùng thêm
+    if (name.contains('_')) {
+      final parts = name.split('_');
+      if (parts.length > 1) {
+        name = parts.sublist(1).join('_');
+      }
+    }
+    return name;
   }
 
   void _openFullEditor(BuildContext context) {
@@ -1588,8 +1614,24 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       ),
                       TextButton(
                         onPressed: () async {
-                          final String? newPath = await AudioService()
-                              .pickAudioFile();
+                          // Tắt nhạc preview đang phát (nếu có) trước khi mở Dialog
+                          _debounceTimer?.cancel();
+                          _stopTimer?.cancel();
+                          if (_isPreviewPlaying) {
+                            await AudioService().stopPreview();
+                            _isPreviewPlaying = false;
+                          }
+                          if (!context.mounted) return;
+                          // Mở BottomSheet Chọn Nhạc
+                          final String? newPath = await showModalBottomSheet<String>(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (context) => SoundSelectionSheet(
+                              currentSelection: _selectedAudioPath ?? 'assets/Sounds/Default/alarm_digital.wav',
+                            ),
+                          );
+                          if (!context.mounted) return;                          
                           if (newPath != null) {
                             setState(() {
                               _selectedAudioPath = newPath;
@@ -1598,6 +1640,18 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                         },
                         child: const Text("Đổi nhạc"),
                       ),
+                      // TextButton(
+                      //   onPressed: () async {
+                      //     final String? newPath = await AudioService()
+                      //         .pickAudioFile();
+                      //     if (newPath != null) {
+                      //       setState(() {
+                      //         _selectedAudioPath = newPath;
+                      //       });
+                      //     }
+                      //   },
+                      //   child: const Text("Đổi nhạc"),
+                      // ),
                     ],
                   ),
                 ),
@@ -1666,6 +1720,459 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class SoundSelectionSheet extends StatefulWidget {
+  final String? currentSelection;
+  const SoundSelectionSheet({super.key, this.currentSelection});
+
+  @override
+  State<SoundSelectionSheet> createState() => _SoundSelectionSheetState();
+}
+
+class _SoundSelectionSheetState extends State<SoundSelectionSheet> {
+  List<String> _defaultSounds = [];
+  List<String> _customSounds = [];
+  bool _isLoading = true;
+  String? _tempSelectedPath;
+  String? _currentlyPlayingPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _tempSelectedPath = widget.currentSelection;
+    _loadSounds();
+  }
+
+  Future<void> _loadSounds() async {
+    setState(() => _isLoading = true);
+    final defaults = await AudioService().getDefaultSounds();
+    final customs = await AudioService().getCustomSounds();
+    if (mounted) {
+      setState(() {
+        _defaultSounds = defaults;
+        _customSounds = customs;
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _togglePlayPreview(String path) async {
+    if (_currentlyPlayingPath == path) {
+      await AudioService().stopPreview();
+      setState(() => _currentlyPlayingPath = null);
+    } else {
+      await AudioService().playPreview(source: path);
+      if (!mounted) return;
+      setState(() => _currentlyPlayingPath = path);
+    }
+  }
+
+  @override
+  void dispose() {
+    AudioService().stopPreview();
+    super.dispose();
+  }
+
+  Widget _buildSoundTile(String path, bool isCustom) {
+    String displayName = path.split('/').last;
+    if (isCustom) {
+      // Cắt bỏ timestamp nếu có
+      final parts = displayName.split('_');
+      if (parts.length > 1) {
+        displayName = parts.sublist(1).join('_');
+      }
+    }
+
+    bool isSelected = _tempSelectedPath == path;
+    bool isPlaying = _currentlyPlayingPath == path;
+
+    return ListTile(
+      leading: IconButton(
+        icon: Icon(
+          isPlaying ? Icons.stop_circle : Icons.play_circle_fill,
+          color: isPlaying ? Colors.red : Colors.blue,
+        ),
+        onPressed: () => _togglePlayPreview(path),
+      ),
+      title: Text(
+        displayName,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          color: isSelected ? Colors.blue : Colors.black87,
+        ),
+      ),
+      trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
+      onTap: () {
+        setState(() => _tempSelectedPath = path);
+        _togglePlayPreview(path);
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              "Chọn âm thanh",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Text("Hệ thống", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                      ),
+                      ..._defaultSounds.map((p) => _buildSoundTile(p, false)),
+                      
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Text("Của bạn", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                      ),
+                      ..._customSounds.map((p) => _buildSoundTile(p, true)),
+                      
+                      if (_customSounds.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text("Chưa có âm thanh cá nhân.", style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
+                        ),
+                    ],
+                  ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text("Thêm"),
+                  onPressed: () async {
+                    final newPath = await AudioService().addCustomSound();
+                    if (newPath != null) {
+                      setState(() => _tempSelectedPath = newPath);
+                      await _loadSounds();
+                      _togglePlayPreview(newPath);
+                    }
+                  },
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Hủy", style: TextStyle(color: Colors.grey)),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(context, _tempSelectedPath);
+                  },
+                  child: const Text("Xác nhận"),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MusicLibraryDialog extends StatefulWidget {
+  const MusicLibraryDialog({super.key});
+
+  @override
+  State<MusicLibraryDialog> createState() => _MusicLibraryDialogState();
+}
+
+class _MusicLibraryDialogState extends State<MusicLibraryDialog> {
+  List<String> _defaultSounds = [];
+  List<String> _customSounds = [];
+  bool _isLoading = true;
+
+  bool _isSelectionMode = false;
+  final Set<String> _selectedPaths = {};
+  String? _currentlyPlayingPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSounds();
+  }
+
+  Future<void> _loadSounds() async {
+    setState(() => _isLoading = true);
+    final defaults = await AudioService().getDefaultSounds();
+    final customs = await AudioService().getCustomSounds();
+
+    if (mounted) {
+      setState(() {
+        _defaultSounds = defaults;
+        _customSounds = customs;
+        _isLoading = false;
+        _isSelectionMode = false;
+        _selectedPaths.clear();
+      });
+    }
+  }
+
+  void _togglePlayPreview(String path) async {
+    if (_currentlyPlayingPath == path) {
+      await AudioService().stopPreview();
+      setState(() => _currentlyPlayingPath = null);
+    } else {
+      await AudioService().playPreview(source: path);
+      setState(() => _currentlyPlayingPath = path);
+    }
+  }
+
+  @override
+  void dispose() {
+    AudioService().stopPreview();
+    super.dispose();
+  }
+
+  Future<void> _handleAddMusic() async {
+    final newPath = await AudioService().addCustomSound();
+    if (newPath != null) {
+      _loadSounds();
+    }
+  }
+
+  Future<void> _handleDeleteSelected() async {
+    bool confirm =
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Xác nhận xóa"),
+            content: Text(
+              "Bạn sắp xóa ${_selectedPaths.length} âm thanh. Hành động này không thể hoàn tác.",
+            ),
+            actions: [
+              TextButton(
+                child: const Text("Hủy"),
+                onPressed: () => Navigator.pop(ctx, false),
+              ),
+              TextButton(
+                child: const Text("Xóa", style: TextStyle(color: Colors.red)),
+                onPressed: () => Navigator.pop(ctx, true),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (confirm) {
+      await AudioService().deleteCustomSounds(_selectedPaths.toList());
+      _loadSounds();
+    }
+  }
+
+  Widget _buildSoundTile(String path, bool isCustom) {
+    // Ẩn đoạn timestamp khi hiển thị tên file để nhìn đẹp hơn
+    String displayName = path.split('/').last;
+    if (isCustom) {
+      // Cắt bỏ phần timestamp (ví dụ: 1715012345_tenbaihat.mp3 -> tenbaihat.mp3)
+      final parts = displayName.split('_');
+      if (parts.length > 1) {
+        displayName = parts.sublist(1).join('_');
+      }
+    }
+
+    bool isSelected = _selectedPaths.contains(path);
+    bool isPlaying = _currentlyPlayingPath == path;
+
+    return ListTile(
+      leading: _isSelectionMode && isCustom
+          ? Checkbox(
+              value: isSelected,
+              onChanged: (val) {
+                setState(() {
+                  val == true
+                      ? _selectedPaths.add(path)
+                      : _selectedPaths.remove(path);
+                });
+              },
+            )
+          : IconButton(
+              icon: Icon(
+                isPlaying ? Icons.stop_circle : Icons.play_circle_fill,
+                color: isPlaying ? Colors.red : Colors.blue,
+              ),
+              onPressed: () => _togglePlayPreview(path),
+            ),
+      title: Text(displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      onTap: () {
+        if (_isSelectionMode && isCustom) {
+          setState(() {
+            isSelected ? _selectedPaths.remove(path) : _selectedPaths.add(path);
+          });
+        } else {
+          _togglePlayPreview(path);
+        }
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Text(
+              "Kho nhạc",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            "Hệ thống",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                        ..._defaultSounds.map(
+                          (path) => _buildSoundTile(path, false),
+                        ),
+
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            top: 16.0,
+                            bottom: 8.0,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                "Của bạn",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              if (_customSounds.isNotEmpty && _isSelectionMode)
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      if (_selectedPaths.length ==
+                                          _customSounds.length) {
+                                        _selectedPaths.clear();
+                                      } else {
+                                        _selectedPaths.addAll(_customSounds);
+                                      }
+                                    });
+                                  },
+                                  child: Text(
+                                    _selectedPaths.length ==
+                                            _customSounds.length
+                                        ? "Bỏ chọn hết"
+                                        : "Chọn hết",
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        ..._customSounds.map(
+                          (path) => _buildSoundTile(path, true),
+                        ),
+                        if (_customSounds.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.all(16.0),
+                            child: Text(
+                              "Chưa có âm thanh nào",
+                              style: TextStyle(
+                                fontStyle: FontStyle.italic,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+
+            const Divider(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (!_isSelectionMode) ...[
+                  TextButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text("Thêm nhạc"),
+                    onPressed: _handleAddMusic,
+                  ),
+                  if (_customSounds.isNotEmpty)
+                    TextButton.icon(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      label: const Text(
+                        "Xóa",
+                        style: TextStyle(color: Colors.red),
+                      ),
+                      onPressed: () => setState(() => _isSelectionMode = true),
+                    ),
+                ] else ...[
+                  TextButton(
+                    onPressed: () => setState(() {
+                      _isSelectionMode = false;
+                      _selectedPaths.clear();
+                    }),
+                    child: const Text("Hủy"),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
+                    onPressed: _selectedPaths.isEmpty
+                        ? null
+                        : _handleDeleteSelected,
+                    child: Text(
+                      "Xóa (${_selectedPaths.length})",
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
         ),
       ),
     );

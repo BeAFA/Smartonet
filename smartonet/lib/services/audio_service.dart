@@ -1,8 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:logging/logging.dart';
-import 'dart:io';
 
 class AudioService {
   static final _log = Logger('AudioService');
@@ -16,27 +20,27 @@ class AudioService {
 
   Future<void> init() async {
     if (_initialized) return;
-    
+
     // Cấu hình Session để không bị xung đột với các app khác
     final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playback,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-      androidAudioAttributes: AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.music,
-        usage: AndroidAudioUsage.alarm,
+    await session.configure(
+      const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          usage: AndroidAudioUsage.alarm,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-    ));
+    );
     _initialized = true;
   }
 
   // Hàm nghe thử nhạc (Preview) khi chọn trong cài đặt
-  Future<void> playPreview({
-    required String source,
-  }) async {
+  Future<void> playPreview({required String source}) async {
     await init();
-    
+
     // Reset player để tránh lỗi state
     if (_player.playing) {
       await _player.stop();
@@ -44,19 +48,19 @@ class AudioService {
 
     try {
       // Kiểm tra xem source là đường dẫn file hay asset
-      // Logic: Nếu đường dẫn chứa '/', khả năng cao là file hệ thống. 
+      // Logic: Nếu đường dẫn chứa '/', khả năng cao là file hệ thống.
       // Assets thường chỉ là 'assets/...'
-      bool isFile = source.startsWith('/') || source.contains(Platform.pathSeparator);
-      
+      bool isFile =
+          source.startsWith('/') || source.contains(Platform.pathSeparator);
+
       // Kiểm tra kỹ hơn nếu là file
       if (isFile) {
-         if (await File(source).exists()) {
-            await _player.setFilePath(source);
-         } else {
-            // Fallback nếu file lỗi -> Chạy nhạc mặc định
-            await _player.setAsset('assets/Sounds/Default/alarm_digital.wav');
-            
-         }
+        if (await File(source).exists()) {
+          await _player.setFilePath(source);
+        } else {
+          // Fallback nếu file lỗi -> Chạy nhạc mặc định
+          await _player.setAsset('assets/Sounds/Default/alarm_digital.wav');
+        }
       } else {
         // Nếu là asset
         await _player.setAsset(source);
@@ -90,5 +94,68 @@ class AudioService {
       return result.files.single.path;
     }
     return null;
+  }
+
+  Future<List<String>> getDefaultSounds() async {
+    try {
+      final manifestContent = await rootBundle.loadString('AssetManifest.json');
+      final Map<String, dynamic> manifestMap = json.decode(manifestContent);
+      return manifestMap.keys
+          .where(
+            (key) =>
+                key.startsWith('assets/Sounds/Default/') &&
+                (key.endsWith('.mp3') || key.endsWith('.wav')),
+          )
+          .toList();
+    } catch (e) {
+      _log.warning("Không thể đọc AssetManifest: $e");
+      return ['assets/Sounds/Default/alarm_digital.wav'];
+    }
+  }
+
+  Future<String> _getCustomizeDirectoryPath() async {
+    final directory = await getApplicationDocumentsDirectory();
+    return p.join(directory.path, 'Sounds', 'Customize');
+  }
+
+  Future<List<String>> getCustomSounds() async {
+    final path = await _getCustomizeDirectoryPath();
+    final dir = Directory(path);
+    List<String> sounds = [];
+    if (await dir.exists()) {
+      await for (var entity in dir.list()) {
+        if (entity is File) {
+          sounds.add(entity.path);
+        }
+      }
+    }
+    return sounds;
+  }
+
+  Future<String?> addCustomSound() async {
+    final pickedPath = await pickAudioFile();
+    if (pickedPath != null) {
+      final customPath = await _getCustomizeDirectoryPath();
+      final originalFileName = p.basename(pickedPath);
+
+      // Gắn timestamp để tránh trùng tên file
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final safeFileName = '${timestamp}_$originalFileName';
+
+      final savedPath = p.join(customPath, safeFileName);
+      final file = File(pickedPath);
+      await file.copy(savedPath);
+      return savedPath;
+    }
+    return null;
+  }
+
+  Future<void> deleteCustomSounds(List<String> pathsToDelete) async {
+    for (String path in pathsToDelete) {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    }
   }
 }
