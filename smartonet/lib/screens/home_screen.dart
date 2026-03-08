@@ -16,6 +16,10 @@ import '../dialogs/voice_dialogs.dart';
 import '../utils/notification.dart';
 import '../services/permission_service.dart';
 import '../dialogs/no_internet_dialog.dart';
+import '../services/api_key_service.dart';
+import '../services/gemini_http_service.dart';
+import '../services/ai_action_executor.dart';
+import '../dialogs/api_key_dialog.dart';
 
 class Smartonet extends StatelessWidget {
   final bool showOnboarding;
@@ -601,6 +605,18 @@ class _MainScreenState extends State<MainScreen> {
       _isEWarningShowing = false;
       return;
     }
+    final apiKey = await ApiKeyService.getApiKey();
+    if (apiKey == null || apiKey.isEmpty) {
+      if (context.mounted) {
+        final isKeySaved = await showDialog<bool>(
+          context: context,
+          builder: (context) => const ApiKeyDialog(),
+        );
+
+        // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
+        if (isKeySaved != true) return;
+      }
+    }
     if (!context.mounted) return;
     final result = await showDialog<String>(
       context: context,
@@ -610,6 +626,46 @@ class _MainScreenState extends State<MainScreen> {
     );
     if (result != null) {
       debugPrint("Text từ voice: $result");
+    }
+
+    if (result != null && result.isNotEmpty) {
+      if (!context.mounted) return;
+
+      // Hiện loading mờ
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Gửi HTTP Request tới Gemini
+      final aiResultMap = await GeminiHttpService.analyzeIntent(result);
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // Tắt loading
+
+      // Xử lý action
+      if (aiResultMap != null) {
+        bool success = await AiActionExecutor.execute(aiResultMap);
+        if (success && context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
+          await _loadDataFromDB(); // Tải lại danh sách trên màn hình
+        } else if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')));
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
+            ),
+          ),
+        );
+      }
     }
   }
 
