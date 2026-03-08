@@ -52,6 +52,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Ứng dụng cần nhận dạng giọng nói để tạo ghi chú và lịch hẹn.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ứng dụng cần quyền sử dụng micro để nghe lệnh giọng nói của bạn.</string>
 
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Ứng dụng cần truy cập thư viện nhạc để bạn có thể chọn nhạc chuông báo thức.</string>

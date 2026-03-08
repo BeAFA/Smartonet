@@ -5,14 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:alarm/alarm.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../services/dbconnector.dart';
 import '../database/models.dart';
 import '../services/alarm_service.dart';
 import '../screens/alarm_screen.dart';
 import '../services/audio_service.dart';
 import '../screens/permission_screen.dart';
+import '../dialogs/voice_dialogs.dart';
 import '../utils/notification.dart';
 import '../services/permission_service.dart';
+import '../dialogs/no_internet_dialog.dart';
 
 class Smartonet extends StatelessWidget {
   final bool showOnboarding;
@@ -54,6 +57,7 @@ class _MainScreenState extends State<MainScreen> {
   final Set<int> _selectedIds = {};
   String _noteFilter = "all";
   String _appointmentFilter = "upcoming";
+  bool _isEWarningShowing = false;
 
   @override
   void initState() {
@@ -558,7 +562,9 @@ class _MainScreenState extends State<MainScreen> {
               Container(width: 1, height: 30, color: Colors.grey),
               Expanded(
                 child: InkWell(
-                  onTap: () {},
+                  onTap: () {
+                    showVoiceRecordDialog(context);
+                  },
                   child: const Center(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -582,6 +588,29 @@ class _MainScreenState extends State<MainScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> showVoiceRecordDialog(BuildContext context) async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    if (connectivityResult.contains(ConnectivityResult.none)) {
+      if (_isEWarningShowing) return;
+      _isEWarningShowing = true;
+      if (context.mounted) {
+        await showNoInternetDialog(context);
+      }
+      _isEWarningShowing = false;
+      return;
+    }
+    if (!context.mounted) return;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return const VoiceRecordDialog();
+      },
+    );
+    if (result != null) {
+      debugPrint("Text từ voice: $result");
+    }
   }
 
   // --- DASHBOARD: CHỈNH SỬA LOGIC HIỂN THỊ ---
@@ -1623,15 +1652,18 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                           }
                           if (!context.mounted) return;
                           // Mở BottomSheet Chọn Nhạc
-                          final String? newPath = await showModalBottomSheet<String>(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            builder: (context) => SoundSelectionSheet(
-                              currentSelection: _selectedAudioPath ?? 'assets/Sounds/Default/alarm_digital.wav',
-                            ),
-                          );
-                          if (!context.mounted) return;                          
+                          final String? newPath =
+                              await showModalBottomSheet<String>(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Colors.transparent,
+                                builder: (context) => SoundSelectionSheet(
+                                  currentSelection:
+                                      _selectedAudioPath ??
+                                      'assets/Sounds/Default/alarm_digital.wav',
+                                ),
+                              );
+                          if (!context.mounted) return;
                           if (newPath != null) {
                             setState(() {
                               _selectedAudioPath = newPath;
@@ -1808,7 +1840,9 @@ class _SoundSelectionSheetState extends State<SoundSelectionSheet> {
           color: isSelected ? Colors.blue : Colors.black87,
         ),
       ),
-      trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
+      trailing: isSelected
+          ? const Icon(Icons.check_circle, color: Colors.blue)
+          : null,
       onTap: () {
         setState(() => _tempSelectedPath = path);
         _togglePlayPreview(path);
@@ -1848,21 +1882,45 @@ class _SoundSelectionSheetState extends State<SoundSelectionSheet> {
                 : ListView(
                     children: [
                       const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Text("Hệ thống", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          "Hệ thống",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
                       ),
                       ..._defaultSounds.map((p) => _buildSoundTile(p, false)),
-                      
+
                       const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Text("Của bạn", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          "Của bạn",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
                       ),
                       ..._customSounds.map((p) => _buildSoundTile(p, true)),
-                      
+
                       if (_customSounds.isEmpty)
                         const Padding(
                           padding: EdgeInsets.all(16.0),
-                          child: Text("Chưa có âm thanh cá nhân.", style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
+                          child: Text(
+                            "Chưa có âm thanh cá nhân.",
+                            style: TextStyle(
+                              fontStyle: FontStyle.italic,
+                              color: Colors.grey,
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -1887,7 +1945,10 @@ class _SoundSelectionSheetState extends State<SoundSelectionSheet> {
                 const Spacer(),
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Hủy", style: TextStyle(color: Colors.grey)),
+                  child: const Text(
+                    "Hủy",
+                    style: TextStyle(color: Colors.grey),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
