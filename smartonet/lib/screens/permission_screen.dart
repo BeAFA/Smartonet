@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:smartonet/utils/permission_banner.dart';
+import 'package:smartonet/utils/notification.dart';
 import '../services/permission_service.dart';
 import './home_screen.dart';
 
@@ -76,7 +76,7 @@ class _PermissionScreenState extends State<PermissionScreen>
     } else {
       if (!_checkBannerVisible) {
         _checkBannerVisible = true;
-        showPermissionBanner(
+        showNotificationPermissionBanner(
           onDismiss: () {
             _checkBannerVisible = false;
           },
@@ -139,7 +139,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                             .requestNotification();
                         if (granted.isPermanentlyDenied) {
                           if (!context.mounted) return;
-                          showPermissionDialog(context);
+                          showNotificationPermissionDialog(context);
                         }
                       },
               ),
@@ -178,7 +178,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                             .requestExactAlarm();
                         if (status.isPermanentlyDenied || status.isDenied) {
                           if (!context.mounted) return;
-                          showPermissionBanner(
+                          showNotificationPermissionBanner(
                             onDismiss: () {
                               _checkBannerVisible = false;
                             },
@@ -247,7 +247,6 @@ class _PermissionScreenState extends State<PermissionScreen>
                   _bullet("Cho phép tự động khởi chạy"),
                   _bullet("Cho phép hiển thị trên màn hình khóa"),
                   _bullet("Cho phép chạy dưới nền"),
-                  _bullet("Bật tối ưu hóa pin cho ứng dụng"),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,

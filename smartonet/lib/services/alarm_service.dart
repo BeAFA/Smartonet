@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:alarm/alarm.dart';
 import 'package:logging/logging.dart';
+import 'package:smartonet/services/dbconnector.dart';
 import '../database/models.dart';
 import 'audio_service.dart';
 
@@ -30,7 +31,7 @@ class AppointmentService {
     }
 
     // 4. XỬ LÝ LOGIC ĐƯỜNG DẪN NHẠC (QUAN TRỌNG)
-    String finalAudioPath = 'assets/Default/alarm_digital.wav'; // Mặc định
+    String finalAudioPath = 'assets/Sounds/Default/alarm_digital.wav'; // Mặc định
 
     if (note.alarmAudioPath != null && note.alarmAudioPath!.trim().isNotEmpty) {
       final customFile = File(note.alarmAudioPath!);
@@ -54,8 +55,10 @@ class AppointmentService {
       vibrate: true, // Rung
       volumeSettings: VolumeSettings.fade(
         volume: note.volume,
-        fadeDuration: const Duration(seconds: 5), // Fade in 3 giây cho đỡ giật mình
-        volumeEnforced: true // Bắt buộc âm lượng tối đa
+        fadeDuration: const Duration(
+          seconds: 5,
+        ), // Fade in 3 giây cho đỡ giật mình
+        volumeEnforced: true, // Bắt buộc âm lượng tối đa
       ),
       notificationSettings: NotificationSettings(
         title: note.title,
@@ -65,14 +68,51 @@ class AppointmentService {
       ),
       // Quan trọng cho Android: Hiện màn hình full kể cả khi khóa máy
       androidFullScreenIntent: true,
-      warningNotificationOnKill: false, 
+      warningNotificationOnKill: false,
     );
 
     // 6. Dừng báo thức cũ (nếu có trùng ID) trước khi đặt mới
     await Alarm.stop(note.id!);
-    
+
     // 7. Đặt báo thức mới
     return await Alarm.set(alarmSettings: alarmSettings);
+  }
+
+  static Future<bool> isTimeConflict(
+    DateTime newTime, {
+    int? ignoreNoteId,
+  }) async {
+    final notes = await DbConnector.instance.getAllNotes();
+
+    final compareTime = DateTime(
+      newTime.year,
+      newTime.month,
+      newTime.day,
+      newTime.hour,
+      newTime.minute,
+    ); // ⚠️ bỏ giây
+
+    for (final note in notes) {
+      if (!note.hasAppointment) continue;
+      if (ignoreNoteId != null && note.id == ignoreNoteId) continue;
+      if (note.isPastAppointment) continue;
+
+      final noteTime = DateTime(
+        note.date.year,
+        note.date.month,
+        note.date.day,
+        note.time.hour,
+        note.time.minute,
+      ); // ⚠️ bỏ giây
+
+      final diff = noteTime.difference(compareTime).inMinutes.abs();
+
+      if (diff == 0) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // Hàm hủy/dừng báo thức
@@ -80,7 +120,7 @@ class AppointmentService {
     try {
       // Dừng nhạc preview (nếu lỡ đang phát)
       await AudioService().stopPreview();
-      
+
       // Dừng báo thức hệ thống
       return await Alarm.stop(id);
     } catch (e) {
