@@ -51,4 +51,6 @@ class Note {
     if (!hasAppointment) return false;
     return time.isBefore(DateTime.now());
   }
+
+  DateTime get dateOnly => DateTime(time.year, time.month, time.day);
 }
