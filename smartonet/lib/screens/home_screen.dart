@@ -20,6 +20,7 @@ import '../services/api_key_service.dart';
 import '../services/gemini_http_service.dart';
 import '../services/ai_action_executor.dart';
 import '../dialogs/api_key_dialog.dart';
+import '../screens/faq_screen.dart';
 
 class Smartonet extends StatelessWidget {
   final bool showOnboarding;
@@ -462,9 +463,25 @@ class _MainScreenState extends State<MainScreen> {
           ),
 
           const SizedBox(width: 8),
-          const CircleAvatar(
-            backgroundColor: Color(0xFF448AFF),
-            child: Icon(Icons.person, color: Colors.white),
+          PopupMenuButton<String>(
+            icon: const CircleAvatar(
+              backgroundColor: Color(0xFF448AFF),
+              child: Icon(Icons.info_outline, color: Colors.white),
+            ),
+            onSelected: (value) {
+              if (value == "faq") {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FaqScreen()),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: "faq",
+                child: Text("Các lỗi thường gặp"),
+              ),
+            ],
           ),
           const SizedBox(width: 16),
         ],
