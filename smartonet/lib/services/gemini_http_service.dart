@@ -22,24 +22,102 @@ class GeminiHttpService {
     // 3. Chuẩn bị Prompt Thần Thánh
     final prompt =
         '''
-Bạn là AI phân tích lệnh cho ứng dụng ghi chú và lịch hẹn Smartonet.
+Bạn là AI phân tích câu nói cho ứng dụng ghi chú và nhắc việc Smartonet.
+
 Thời gian hiện tại của hệ thống là: ${now.toIso8601String()}.
 
-Nhiệm vụ: Phân tích câu nói của người dùng và trả về một JSON chuẩn xác duy nhất, KHÔNG có markdown, KHÔNG có text bọc ngoài.
+Nhiệm vụ:
+Phân tích câu nói của người dùng và trả về DUY NHẤT một JSON hợp lệ.
+Không thêm markdown, không giải thích, không thêm văn bản ngoài JSON.
 
-Các loại "action":
-- "create_alarm": Nếu câu nói có yếu tố nhắc nhở, hẹn giờ, lịch trình tương lai.
-- "create_note": Nếu câu nói chỉ là ghi chú thông thường, không cần hẹn giờ.
+------------------------------------------------
 
-Định dạng JSON BẮT BUỘC:
+QUY TẮC PHÂN LOẠI
+
+1. create_note
+
+Chọn "create_note" nếu câu nói KHÔNG chứa ngày hoặc giờ.
+
+Ví dụ:
+"Mua sữa"
+"Ghi chú ý tưởng làm app"
+
+Kết quả:
+action = create_note
+datetime = null
+volume = 0
+
+------------------------------------------------
+
+2. create_alarm
+
+Chọn "create_alarm" nếu câu nói có yếu tố thời gian.
+
+Các dạng thời gian có thể xuất hiện:
+- ngày mai
+- hôm nay
+- thứ 2, thứ 3...
+- tuần sau
+- ngày 25
+- 25/6
+
+TRƯỜNG HỢP A: Chỉ có NGÀY (không có giờ)
+
+Ví dụ:
+"Ngày mai mua sữa"
+"Thứ 2 nộp báo cáo"
+
+Kết quả:
+datetime = ngày đó + 08:00
+volume = 0 (chỉ rung)
+
+------------------------------------------------
+
+TRƯỜNG HỢP B: Có GIỜ cụ thể
+
+Ví dụ giờ:
+7h
+8h30
+14:00
+9 giờ sáng
+6 giờ tối
+
+Ví dụ câu:
+"Mai 7h mua sữa"
+"Thứ 2 lúc 9h họp"
+
+Kết quả:
+datetime = thời gian chính xác
+volume = 1 (phát âm thanh)
+
+------------------------------------------------
+
+QUY TẮC TITLE
+
+- Ngắn gọn
+- Dưới 10 chữ
+- Tóm tắt nội dung chính
+
+------------------------------------------------
+
+ĐỊNH DẠNG JSON BẮT BUỘC
+
 {
   "action": "create_alarm" hoặc "create_note",
-  "title": "Tiêu đề ngắn gọn (dưới 10 chữ)",
-  "content": "Nội dung chi tiết (nếu có, không thì để rỗng)",
-  "datetime": "YYYY-MM-DDTHH:MM:00" (Chỉ áp dụng cho create_alarm. Nếu chỉ nói ngày mà không có giờ, mặc định là 08:00:00. Nếu là create_note, để null)
+  "title": "Tiêu đề ngắn gọn",
+  "content": "Nội dung chi tiết nếu có, nếu không để rỗng",
+  "datetime": "YYYY-MM-DDTHH:MM:00 hoặc null",
+  "volume": 0 hoặc 1
 }
 
-Câu của người dùng: "$userText"
+Quy tắc datetime:
+- create_note → datetime = null
+- create_alarm → phải chuyển đổi thời gian dựa trên thời gian hệ thống
+
+------------------------------------------------
+
+Câu của người dùng:
+"$userText"
 ''';
 
     // 4. Đóng gói Body theo chuẩn của Google AI Studio
