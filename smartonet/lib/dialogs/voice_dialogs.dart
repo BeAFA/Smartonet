@@ -23,6 +23,12 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
     initSpeech();
   }
 
+  @override
+  void dispose() {
+    speechToText.stop();
+    super.dispose();
+  }
+
   void initSpeech() async {
     speechEnabled = await speechToText.initialize(
       onError: (error) {
@@ -61,7 +67,9 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
     if (speechEnabled) {
       startListening();
     }
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void startListening() async {
@@ -70,10 +78,12 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
       onResult: onSpeechResult,
       localeId: systemLocaleId,
     );
-    setState(() {
-      isRecording = true;
-      status = "Đang nghe...";
-    });
+    if (mounted) {
+      setState(() {
+        isRecording = true;
+        status = "Đang nghe...";
+      });
+    }
   }
 
   void onSpeechResult(SpeechRecognitionResult result) {

@@ -63,6 +63,7 @@ class _MainScreenState extends State<MainScreen> {
   String _noteFilter = "all";
   String _appointmentFilter = "upcoming";
   bool _isEWarningShowing = false;
+  bool _isProcessingVoice = false;
 
   @override
   void initState() {
@@ -612,77 +613,83 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> showVoiceRecordDialog(BuildContext context) async {
-    final connectivityResult = await Connectivity().checkConnectivity();
-    if (connectivityResult.contains(ConnectivityResult.none)) {
-      if (_isEWarningShowing) return;
-      _isEWarningShowing = true;
-      if (context.mounted) {
-        await showNoInternetDialog(context);
-      }
-      _isEWarningShowing = false;
-      return;
-    }
-    final apiKey = await ApiKeyService.getApiKey();
-    if (apiKey == null || apiKey.isEmpty) {
-      if (context.mounted) {
-        final isKeySaved = await showDialog<bool>(
-          context: context,
-          builder: (context) => const ApiKeyDialog(),
-        );
-
-        // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
-        if (isKeySaved != true) return;
-      }
-    }
-    if (!context.mounted) return;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        return const VoiceRecordDialog();
-      },
-    );
-    if (result != null) {
-      debugPrint("Text từ voice: $result");
-    }
-
-    if (result != null && result.isNotEmpty) {
-      if (!context.mounted) return;
-
-      // Hiện loading mờ
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
-      // Gửi HTTP Request tới Gemini
-      final aiResultMap = await GeminiHttpService.analyzeIntent(result);
-
-      if (!context.mounted) return;
-      Navigator.pop(context); // Tắt loading
-
-      // Xử lý action
-      if (aiResultMap != null) {
-        bool success = await AiActionExecutor.execute(aiResultMap);
-        if (success && context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
-          await _loadDataFromDB(); // Tải lại danh sách trên màn hình
-        } else if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')));
+    if (_isProcessingVoice) return;
+    _isProcessingVoice = true;
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+      if (connectivityResult.contains(ConnectivityResult.none)) {
+        if (_isEWarningShowing) return;
+        _isEWarningShowing = true;
+        if (context.mounted) {
+          await showNoInternetDialog(context);
         }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
-            ),
-          ),
-        );
+        _isEWarningShowing = false;
+        return;
       }
+      final apiKey = await ApiKeyService.getApiKey();
+      if (apiKey == null || apiKey.isEmpty) {
+        if (context.mounted) {
+          final isKeySaved = await showDialog<bool>(
+            context: context,
+            builder: (context) => const ApiKeyDialog(),
+          );
+
+          // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
+          if (isKeySaved != true) return;
+        }
+      }
+      if (!context.mounted) return;
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          return const VoiceRecordDialog();
+        },
+      );
+      if (result != null) {
+        debugPrint("Text từ voice: $result");
+      }
+
+      if (result != null && result.isNotEmpty) {
+        if (!context.mounted) return;
+
+        // Hiện loading mờ
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => const Center(child: CircularProgressIndicator()),
+        );
+
+        // Gửi HTTP Request tới Gemini
+        final aiResultMap = await GeminiHttpService.analyzeIntent(result);
+
+        if (!context.mounted) return;
+        Navigator.pop(context); // Tắt loading
+
+        // Xử lý action
+        if (aiResultMap != null) {
+          bool success = await AiActionExecutor.execute(aiResultMap);
+          if (success && context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
+            await _loadDataFromDB(); // Tải lại danh sách trên màn hình
+          } else if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')),
+            );
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
+              ),
+            ),
+          );
+        }
+      }
+    } finally {
+      _isProcessingVoice = false;
     }
   }
 
@@ -1364,10 +1371,13 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
       _volume = widget.noteData?.volume ?? 1.0;
     }
 
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _onVolumeChanged(double newVolume) {
+    if (!mounted) return;
     setState(() {
       _volume = newVolume;
     });
