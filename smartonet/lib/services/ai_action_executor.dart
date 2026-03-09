@@ -10,6 +10,7 @@ class AiActionExecutor {
       final title = jsonMap['title'] ?? 'Ghi chú AI';
       final content = jsonMap['content'] ?? '';
       final datetimeStr = jsonMap['datetime'];
+      final volume = (jsonMap['volume'] ?? 0).toDouble();
 
       DateTime timeToSave = DateTime.now();
       bool hasAppt = false;
@@ -27,7 +28,7 @@ class AiActionExecutor {
         date: DateTime(timeToSave.year, timeToSave.month, timeToSave.day),
         time: timeToSave,
         hasAppointment: hasAppt,
-        volume: 1.0,
+        volume: volume,
       );
 
       // Lưu DB

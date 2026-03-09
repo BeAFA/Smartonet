@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_key_service.dart';
+import '../screens/gemini_api_guide_screen.dart';
 
 class ApiKeyDialog extends StatefulWidget {
   const ApiKeyDialog({super.key});
@@ -101,12 +102,22 @@ class _ApiKeyDialogState extends State<ApiKeyDialog> {
                   ),
                   const SizedBox(height: 12),
                   // Gợi ý chỗ lấy Key (Bạn có thể dùng package url_launcher để làm dòng này click được ra trình duyệt)
-                  const Text(
-                    "Mẹo: Lấy Key miễn phí tại aistudio.google.com",
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                      color: Colors.blueAccent,
+                  TextButton(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const GeminiApiGuideScreen(),
+                        ),
+                      );
+
+                      if (context.mounted) {
+                        Navigator.pop(context, false);
+                      }
+                    },
+                    child: const Text(
+                      "Hướng dẫn lấy Key miễn phí tại Google AI Studio",
+                      style: TextStyle(fontSize: 12),
                     ),
                   ),
                   const SizedBox(height: 24),
