@@ -7,6 +7,10 @@ import 'package:path/path.dart' as p;
 import 'services/alarm_service.dart';
 import 'services/audio_service.dart';
 import 'screens/home_screen.dart';
+import 'screens/permission_screen.dart';
+import 'dart:async';
+import 'utils/notification.dart';
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,5 +40,28 @@ Future<void> _initAppFolders() async {
     }
   } catch (e) {
     debugPrint("Lỗi khi tạo thư mục: $e");
+  }
+}
+
+class Smartonet extends StatelessWidget {
+  final bool showOnboarding;
+  const Smartonet({super.key, required this.showOnboarding});
+  
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Smartonet',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2563EB),
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+      ),
+      scaffoldMessengerKey: messengerKey,
+      home: showOnboarding ? const PermissionScreen() : const MainScreen(),
+    );
   }
 }

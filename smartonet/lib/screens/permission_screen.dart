@@ -285,7 +285,7 @@ class _PermissionScreenState extends State<PermissionScreen>
           child: FilledButton(
             onPressed: _finishOnboarding,
             child: const Text(
-              "Đã xong, Vào ứng dụng",
+              "Đã xong! Vào ứng dụng",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
