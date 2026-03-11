@@ -1,16 +1,16 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
-import 'api_key_service.dart';
 
 class GeminiHttpService {
   static Future<Map<String, dynamic>?> analyzeIntent(String userText) async {
     // 1. Lấy API Key từ Secure Storage
-    final apiKey = await ApiKeyService.getApiKey();
-    if (apiKey == null || apiKey.isEmpty) {
-      debugPrint('Chưa có API Key');
-      return null;
-    }
+    // final apiKey = await ApiKeyService.getApiKey();
+    // if (apiKey == null || apiKey.isEmpty) {
+    //   debugPrint('Chưa có API Key');
+    //   return null;
+    // }
+    String apiKey = 'AIzaSyBWKW5tWirlnebYbbrNXSajU_WbwsrKBLE';
 
     // 2. Cấu hình Endpoint của Gemini 1.5 Flash
     final url = Uri.parse(
@@ -19,7 +19,6 @@ class GeminiHttpService {
 
     final now = DateTime.now();
 
-    // 3. Chuẩn bị Prompt Thần Thánh
     final prompt =
         '''
 Bạn là AI phân tích câu nói cho ứng dụng ghi chú và nhắc việc Smartonet.
@@ -120,7 +119,6 @@ Câu của người dùng:
 "$userText"
 ''';
 
-    // 4. Đóng gói Body theo chuẩn của Google AI Studio
     final requestBody = jsonEncode({
       "contents": [
         {
@@ -130,26 +128,22 @@ Câu của người dùng:
         },
       ],
       "generationConfig": {
-        "responseMimeType": "application/json", // Ép server trả về JSON
+        "responseMimeType": "application/json",
       },
     });
 
     try {
-      // 5. Bắn Request
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: requestBody,
       );
 
-      // 6. Xử lý Kết quả
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        // Bóc tách text từ cây JSON của Google trả về
         final String textResponse =
             data['candidates'][0]['content']['parts'][0]['text'];
 
-        // Parse String JSON thành Map của Dart
         return jsonDecode(textResponse);
       } else {
         debugPrint('Lỗi HTTP: ${response.statusCode} - ${response.body}');

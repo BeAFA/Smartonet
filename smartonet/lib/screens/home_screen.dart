@@ -12,10 +12,8 @@ import '../dialogs/voice_dialogs.dart';
 import '../utils/notification.dart';
 import '../services/permission_service.dart';
 import '../dialogs/no_internet_dialog.dart';
-import '../services/api_key_service.dart';
 import '../services/gemini_http_service.dart';
 import '../services/ai_action_executor.dart';
-import '../dialogs/api_key_dialog.dart';
 import '../screens/faq_screen.dart';
 import '../widgets/section_header.dart';
 import '../dialogs/note_form_dialog.dart';
@@ -42,9 +40,9 @@ class _MainScreenState extends State<MainScreen> {
   bool _isEWarningShowing = false;
   bool _isProcessingVoice = false;
 
-  List<Note> _upcomingAppointments = [];
+  // List<Note> _upcomingAppointments = [];
   List<Note> _recentNotes = [];
-  List<Note> _filteredData = [];
+  // List<Note> _filteredData = [];
 
   @override
   void initState() {
@@ -136,7 +134,7 @@ class _MainScreenState extends State<MainScreen> {
       _allNotes = notes;
 
       // chỉ lấy 3 lịch hẹn gần nhất
-      _upcomingAppointments = upcoming.take(3).toList();
+      // _upcomingAppointments = upcoming.take(3).toList();
 
       // lưu toàn bộ ghi chú đã sort
       _recentNotes = recent;
@@ -633,18 +631,18 @@ class _MainScreenState extends State<MainScreen> {
         _isEWarningShowing = false;
         return;
       }
-      final apiKey = await ApiKeyService.getApiKey();
-      if (apiKey == null || apiKey.isEmpty) {
-        if (context.mounted) {
-          final isKeySaved = await showDialog<bool>(
-            context: context,
-            builder: (context) => const ApiKeyDialog(),
-          );
+      // final apiKey = await ApiKeyService.getApiKey();
+      // if (apiKey == null || apiKey.isEmpty) {
+      //   if (context.mounted) {
+      //     final isKeySaved = await showDialog<bool>(
+      //       context: context,
+      //       builder: (context) => const ApiKeyDialog(),
+      //     );
 
-          // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
-          if (isKeySaved != true) return;
-        }
-      }
+      //     // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
+      //     if (isKeySaved != true) return;
+      //   }
+      // }
       if (!context.mounted) return;
       final result = await showDialog<String>(
         context: context,
@@ -670,7 +668,7 @@ class _MainScreenState extends State<MainScreen> {
         final aiResultMap = await GeminiHttpService.analyzeIntent(result);
 
         if (!context.mounted) return;
-        Navigator.pop(context); // Tắt loading
+        Navigator.pop(context);
 
         // Xử lý action
         if (aiResultMap != null) {
@@ -823,7 +821,7 @@ class _MainScreenState extends State<MainScreen> {
       data.sort((a, b) => a.time.compareTo(b.time));
     }
 
-    _filteredData = data;
+    // _filteredData = data;
   }
 
   // --- DANH SÁCH CHUNG: CHỈNH SỬA LOGIC ---
