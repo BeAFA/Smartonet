@@ -10,7 +10,7 @@ class GeminiHttpService {
   }) async {
     // String apiKey = await ApiKeyService.getApiKey() ?? '';
     String apiKey =
-        'REMOVED'; // Xóa dòng này nếu dùng storage
+        ''; // Xóa dòng này nếu dùng storage
 
     final url = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$apiKey',
