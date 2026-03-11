@@ -8,7 +8,7 @@ class GeminiHttpService {
     String userText, {
     List<Note>? currentData,
   }) async {
-    String apiKey = 'REMOVED'; 
+    String apiKey = ''; 
 
     final url = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$apiKey',
