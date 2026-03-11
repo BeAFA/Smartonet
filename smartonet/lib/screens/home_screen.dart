@@ -716,33 +716,42 @@ class _MainScreenState extends State<MainScreen> {
           }
 
           // 4. Xử lý Action và cập nhật UI
-          if (aiResultMap != null && context.mounted) {
-            bool success = await AiActionExecutor.execute(aiResultMap, context: context);
+if (aiResultMap != null && context.mounted) {
+  final String type = aiResultMap['type'] ?? 'conversation';
+  final String aiMessage = aiResultMap['message'] ?? 'Tôi đã hiểu.';
 
-            if (success) {
-              // Sử dụng câu trả lời linh hoạt của AI (VD: "Dạ em đã xóa lịch cho anh rồi")
-              final String aiMessage =
-                  aiResultMap['message'] ?? 'Thao tác thành công!';
-              if (context.mounted) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(aiMessage)));
-              }
-              await _loadDataFromDB(); // Tải lại danh sách trên màn hình
-            } else if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Lỗi khi lưu/cập nhật dữ liệu.')),
-              );
-            }
-          } else if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
-                ),
-              ),
-            );
-          }
+  if (type == 'command') {
+    // CHỈ THỰC THI NẾU LÀ LỆNH
+    AiExecutionResult execResult = await AiActionExecutor.execute(aiResultMap, context: context);
+
+    if (!execResult.hasError && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(aiMessage)));
+      await _loadDataFromDB();
+    } else if(context.mounted) {
+      // LUỒNG TỰ SỬA LỖI (Dành cho lỗi kỹ thuật như sai ID)
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đang tự động xử lý lại...')));
+      
+      final correctionMap = await GeminiHttpService.agentSelfCorrection(
+        userText: result,
+        executionResult: execResult,
+        currentData: allData,
+      );
+
+      if (correctionMap != null && context.mounted) {
+        // Xử lý kết quả sửa lỗi tương tự như trên...
+      }
+    }
+  } else {
+    // NẾU LÀ CONVERSATION (AI đang hỏi lại hoặc trò chuyện)
+    // Hiển thị trực tiếp câu hỏi của AI để người dùng biết mà trả lời
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(aiMessage),
+        duration: const Duration(seconds: 5), // Cho người dùng thời gian đọc câu hỏi
+      )
+    );
+  }
+}
         } catch (e) {
           // BẮT LỖI: Nếu API lỗi, phải tắt loading và báo cho người dùng
           debugPrint("Lỗi khi xử lý giọng nói với AI: $e");

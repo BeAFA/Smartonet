@@ -6,20 +6,43 @@ import 'audio_service.dart';
 import '../screens/audio_preview_screen.dart';
 
 // =========================================================================
-// 1. ĐỊNH NGHĨA KIỂU HÀM XỬ LÝ
+// 1. CLASS KẾT QUẢ THỰC THI (MỚI)
 // =========================================================================
-typedef CommandHandler = Future<bool> Function(Map<String, dynamic> payload);
+class CommandResult {
+  final Map<String, dynamic> command;
+  final bool isSuccess;
+  final String? errorMessage;
+
+  CommandResult({
+    required this.command,
+    required this.isSuccess,
+    this.errorMessage,
+  });
+}
+
+class AiExecutionResult {
+  final List<CommandResult> results;
+
+  AiExecutionResult(this.results);
+
+  bool get hasError => results.any((r) => !r.isSuccess);
+
+  List<CommandResult> get successes => results.where((r) => r.isSuccess).toList();
+  List<CommandResult> get failures => results.where((r) => !r.isSuccess).toList();
+}
 
 // =========================================================================
-// 2. ENUM ĐĂNG KÝ CHỨC NĂNG (REGISTRY PATTERN)
+// 2. ĐỊNH NGHĨA KIỂU HÀM XỬ LÝ
+// =========================================================================
+typedef CommandHandler = Future<CommandResult> Function(Map<String, dynamic> payload);
+
+// =========================================================================
+// 3. ENUM ĐĂNG KÝ CHỨC NĂNG
 // =========================================================================
 enum AppCommand {
-  // --- Các lệnh liên quan đến Ghi chú & Lịch hẹn ---
   createNote('create', _handleCreateNote),
   updateNote('update', _handleUpdateNote),
   deleteNote('delete', _handleDeleteNote),
-
-  // --- Các lệnh liên quan đến Báo thức & Âm thanh ---
   previewAudio('preview_audio', _handlePreviewAudio),
   stopPreview('stop_preview', _handleStopPreview),
   deleteAudio('delete_audio', _handleDeleteAudio);
@@ -29,7 +52,6 @@ enum AppCommand {
 
   const AppCommand(this.keyword, this.handler);
 
-  // Tra cứu Enum từ keyword do AI gửi về
   static AppCommand? fromKeyword(String keyword) {
     for (var command in AppCommand.values) {
       if (command.keyword == keyword) return command;
@@ -39,59 +61,63 @@ enum AppCommand {
 }
 
 // =========================================================================
-// 3. BỘ PHÂN PHỐI LỆNH TRUNG TÂM (DISPATCHER)
+// 4. BỘ PHÂN PHỐI LỆNH TRUNG TÂM (DISPATCHER)
 // =========================================================================
 class AiActionExecutor {
-  static Future<bool> execute(
+  static Future<AiExecutionResult> execute(
     Map<String, dynamic> jsonMap, {
     BuildContext? context,
   }) async {
+    List<CommandResult> results = [];
     try {
       final List<dynamic> commands = jsonMap['commands'] ?? [];
 
-      // Xử lý fallback nếu AI không trả về mảng commands
       if (commands.isEmpty) {
-        return await _dispatchCommand(jsonMap, context);
+        results.add(await _dispatchCommand(jsonMap, context));
+        return AiExecutionResult(results);
       }
 
-      bool allSuccess = true;
       for (var cmd in commands) {
         if (cmd is Map<String, dynamic>) {
-          bool success = await _dispatchCommand(cmd, context);
-          if (!success) allSuccess = false;
+          results.add(await _dispatchCommand(cmd, context));
         }
       }
-      return allSuccess;
+      return AiExecutionResult(results);
     } catch (e) {
       debugPrint('Lỗi khi thực thi danh sách hành động AI: $e');
-      return false;
+      results.add(CommandResult(
+          command: jsonMap,
+          isSuccess: false,
+          errorMessage: 'Lỗi hệ thống không xác định: $e'));
+      return AiExecutionResult(results);
     }
   }
 
-  static Future<bool> _dispatchCommand(
+  static Future<CommandResult> _dispatchCommand(
     Map<String, dynamic> cmdMap,
     BuildContext? context,
   ) async {
     final String? actionKeyword = cmdMap['action'];
-    if (actionKeyword == null) return false;
+    if (actionKeyword == null) {
+      return CommandResult(
+          command: cmdMap, isSuccess: false, errorMessage: 'Thiếu action keyword.');
+    }
 
-    // Tìm lệnh đã đăng ký
     final command = AppCommand.fromKeyword(actionKeyword);
-
     if (command == null) {
-      debugPrint('AI gửi lệnh không được hỗ trợ: $actionKeyword');
-      return false;
+      return CommandResult(
+          command: cmdMap,
+          isSuccess: false,
+          errorMessage: 'Lệnh không được hỗ trợ: $actionKeyword');
     }
 
     if (actionKeyword == 'preview_audio') {
       if (context != null && context.mounted) {
-        // Lấy dữ liệu từ AI
         final String keyword = cmdMap['keyword'] ?? 'all';
         final String audioType = cmdMap['audio_type'] ?? 'both';
         final int playCount = cmdMap['play_count'] ?? 1;
         final int? duration = cmdMap['duration_in_seconds'];
 
-        // Mở màn hình AudioPreviewScreen thay vì gọi ngầm
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -103,128 +129,170 @@ class AiActionExecutor {
             ),
           ),
         );
-        return true;
+        return CommandResult(command: cmdMap, isSuccess: true);
       } else {
-        debugPrint("Thiếu BuildContext, không thể mở màn hình phát nhạc!");
-        return false;
+        return CommandResult(
+            command: cmdMap,
+            isSuccess: false,
+            errorMessage: 'Thiếu ngữ cảnh UI để mở màn hình phát nhạc.');
       }
     }
 
-    // Các lệnh khác (create, update, delete...) vẫn chạy như bình thường
     return await command.handler(cmdMap);
   }
 }
 
 // =========================================================================
-// 4. CÁC HÀM XỬ LÝ LOGIC CHI TIẾT (HANDLERS)
+// 5. CÁC HÀM XỬ LÝ LOGIC CHI TIẾT
 // =========================================================================
 
-// ---------------- Lĩnh vực Ghi chú (Notes) ----------------
+Future<CommandResult> _handleCreateNote(Map<String, dynamic> cmdMap) async {
+  try {
+    final title = cmdMap['title'] ?? 'Ghi chú AI';
+    final content = cmdMap['content'] ?? '';
+    final datetimeStr = cmdMap['datetime'];
+    final hasAppt = cmdMap['has_appointment'] ?? false;
+    final volume = (cmdMap['volume'] ?? 0).toDouble();
 
-Future<bool> _handleCreateNote(Map<String, dynamic> cmdMap) async {
-  final title = cmdMap['title'] ?? 'Ghi chú AI';
-  final content = cmdMap['content'] ?? '';
-  final datetimeStr = cmdMap['datetime'];
-  final hasAppt = cmdMap['has_appointment'] ?? false;
-  final volume = (cmdMap['volume'] ?? 0).toDouble();
+    DateTime timeToSave =
+        datetimeStr != null ? DateTime.parse(datetimeStr) : DateTime.now();
 
-  DateTime timeToSave = datetimeStr != null
-      ? DateTime.parse(datetimeStr)
-      : DateTime.now();
+    Note noteToSave = Note(
+      title: title,
+      content: content,
+      date: DateTime(timeToSave.year, timeToSave.month, timeToSave.day),
+      time: timeToSave,
+      hasAppointment: hasAppt,
+      volume: volume,
+    );
 
-  Note noteToSave = Note(
-    title: title,
-    content: content,
-    date: DateTime(timeToSave.year, timeToSave.month, timeToSave.day),
-    time: timeToSave,
-    hasAppointment: hasAppt,
-    volume: volume,
-  );
+    int id = await DbConnector.instance.saveNote(noteToSave);
+    noteToSave.id = id;
 
-  int id = await DbConnector.instance.saveNote(noteToSave);
-  noteToSave.id = id;
-
-  if (hasAppt && timeToSave.isAfter(DateTime.now())) {
-    await AppointmentService.scheduleAppointment(noteToSave);
+    if (hasAppt && timeToSave.isAfter(DateTime.now())) {
+      await AppointmentService.scheduleAppointment(noteToSave);
+    }
+    return CommandResult(command: cmdMap, isSuccess: true);
+  } catch (e) {
+    return CommandResult(
+        command: cmdMap, isSuccess: false, errorMessage: 'Lỗi tạo mới: $e');
   }
-  return true;
 }
 
-Future<bool> _handleUpdateNote(Map<String, dynamic> cmdMap) async {
-  final int? targetId = cmdMap['target_id'] != null
-      ? (cmdMap['target_id'] as num).toInt()
-      : null;
-  if (targetId == null) return false;
+Future<CommandResult> _handleUpdateNote(Map<String, dynamic> cmdMap) async {
+  try {
+    final int? targetId = cmdMap['target_id'] != null
+        ? (cmdMap['target_id'] as num).toInt()
+        : null;
+    if (targetId == null) {
+      return CommandResult(
+          command: cmdMap, isSuccess: false, errorMessage: 'Không có target_id.');
+    }
 
-  Note? oldNote = await DbConnector.instance.getNoteById(targetId);
-  if (oldNote == null) return false;
+    Note? oldNote = await DbConnector.instance.getNoteById(targetId);
+    if (oldNote == null) {
+      return CommandResult(
+          command: cmdMap,
+          isSuccess: false,
+          errorMessage: 'Không tìm thấy ghi chú/lịch hẹn nào có ID $targetId.');
+    }
 
-  await AppointmentService.cancelAlarm(targetId);
+    await AppointmentService.cancelAlarm(targetId);
 
-  final datetimeStr = cmdMap['datetime'];
-  DateTime newTime = datetimeStr != null
-      ? DateTime.parse(datetimeStr)
-      : oldNote.time;
-  final volume = (cmdMap['volume'] ?? 0).toDouble();
-  final hasAppt = cmdMap['has_appointment'] ?? oldNote.hasAppointment;
+    final datetimeStr = cmdMap['datetime'];
+    DateTime newTime =
+        datetimeStr != null ? DateTime.parse(datetimeStr) : oldNote.time;
+    final volume = (cmdMap['volume'] ?? 0).toDouble();
+    final hasAppt = cmdMap['has_appointment'] ?? oldNote.hasAppointment;
 
-  Note updatedNote = Note(
-    id: oldNote.id,
-    title: cmdMap['title'] ?? oldNote.title,
-    content: cmdMap['content'] ?? oldNote.content,
-    date: DateTime(newTime.year, newTime.month, newTime.day),
-    time: newTime,
-    hasAppointment: hasAppt,
-    volume: volume > 0 ? volume : oldNote.volume,
-    alarmAudioPath: oldNote.alarmAudioPath,
-  );
+    Note updatedNote = Note(
+      id: oldNote.id,
+      title: cmdMap['title'] ?? oldNote.title,
+      content: cmdMap['content'] ?? oldNote.content,
+      date: DateTime(newTime.year, newTime.month, newTime.day),
+      time: newTime,
+      hasAppointment: hasAppt,
+      volume: volume > 0 ? volume : oldNote.volume,
+      alarmAudioPath: oldNote.alarmAudioPath,
+    );
 
-  await DbConnector.instance.saveNote(updatedNote);
+    await DbConnector.instance.saveNote(updatedNote);
 
-  if (updatedNote.hasAppointment && updatedNote.time.isAfter(DateTime.now())) {
-    await AppointmentService.scheduleAppointment(updatedNote);
+    if (updatedNote.hasAppointment && updatedNote.time.isAfter(DateTime.now())) {
+      await AppointmentService.scheduleAppointment(updatedNote);
+    }
+    return CommandResult(command: cmdMap, isSuccess: true);
+  } catch (e) {
+    return CommandResult(
+        command: cmdMap, isSuccess: false, errorMessage: 'Lỗi cập nhật: $e');
   }
-  return true;
 }
 
-Future<bool> _handleDeleteNote(Map<String, dynamic> cmdMap) async {
-  final int? targetId = cmdMap['target_id'] != null
-      ? (cmdMap['target_id'] as num).toInt()
-      : null;
-  if (targetId == null) return false;
+Future<CommandResult> _handleDeleteNote(Map<String, dynamic> cmdMap) async {
+  try {
+    final int? targetId = cmdMap['target_id'] != null
+        ? (cmdMap['target_id'] as num).toInt()
+        : null;
+    if (targetId == null) {
+      return CommandResult(
+          command: cmdMap, isSuccess: false, errorMessage: 'Không có target_id.');
+    }
 
-  await AppointmentService.cancelAlarm(targetId);
-  await DbConnector.instance.deleteNote(targetId);
-  return true;
+    Note? oldNote = await DbConnector.instance.getNoteById(targetId);
+    if (oldNote == null) {
+      return CommandResult(
+          command: cmdMap,
+          isSuccess: false,
+          errorMessage: 'Không tìm thấy ID $targetId để xóa.');
+    }
+
+    await AppointmentService.cancelAlarm(targetId);
+    await DbConnector.instance.deleteNote(targetId);
+    return CommandResult(command: cmdMap, isSuccess: true);
+  } catch (e) {
+    return CommandResult(
+        command: cmdMap, isSuccess: false, errorMessage: 'Lỗi khi xóa: $e');
+  }
 }
 
-// ---------------- Lĩnh vực Âm thanh & Báo thức (Audio/Alarms) ----------------
+Future<CommandResult> _handlePreviewAudio(Map<String, dynamic> payload) async {
+  try {
+    final String? keyword = payload['keyword'];
+    final String audioType = payload['audio_type'] ?? 'both';
+    final int playCount = payload['play_count'] ?? 1;
+    final int? duration = payload['duration_in_seconds'];
 
-Future<bool> _handlePreviewAudio(Map<String, dynamic> payload) async {
-  final String? keyword = payload['keyword'];
-  final String audioType = payload['audio_type'] ?? 'both';
-  final int playCount = payload['play_count'] ?? 1;
-  final int? duration = payload['duration_in_seconds'];
-
-  // Gọi hàm phát nhạc thông minh
-  await AudioService().previewAdvanced(
-    keyword: keyword,
-    targetType: audioType,
-    playCount: playCount,
-    durationInSeconds: duration,
-  );
-  return true;
+    await AudioService().previewAdvanced(
+      keyword: keyword,
+      targetType: audioType,
+      playCount: playCount,
+      durationInSeconds: duration,
+    );
+    return CommandResult(command: payload, isSuccess: true);
+  } catch (e) {
+    return CommandResult(
+        command: payload, isSuccess: false, errorMessage: 'Lỗi phát nhạc: $e');
+  }
 }
 
-Future<bool> _handleStopPreview(Map<String, dynamic> payload) async {
+Future<CommandResult> _handleStopPreview(Map<String, dynamic> payload) async {
   await AudioService().stopPreview();
-  return true;
+  return CommandResult(command: payload, isSuccess: true);
 }
 
-Future<bool> _handleDeleteAudio(Map<String, dynamic> payload) async {
+Future<CommandResult> _handleDeleteAudio(Map<String, dynamic> payload) async {
   final String? keyword = payload['keyword'];
   if (keyword != null && keyword.isNotEmpty) {
-    return await AudioService().deleteCustomAudioByKeyword(keyword);
+    bool deleted = await AudioService().deleteCustomAudioByKeyword(keyword);
+    if (deleted) {
+      return CommandResult(command: payload, isSuccess: true);
+    } else {
+      return CommandResult(
+          command: payload,
+          isSuccess: false,
+          errorMessage: 'Không tìm thấy bài nhạc chứa từ khóa "$keyword".');
+    }
   }
-  return false;
+  return CommandResult(
+      command: payload, isSuccess: false, errorMessage: 'Thiếu từ khóa.');
 }

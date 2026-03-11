@@ -96,7 +96,7 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
 
   void stopListening() async {
     await speechToText.stop();
-    if (!context.mounted) return;
+    if (!mounted) return;
     setState(() {
       isRecording = false;
       status = "Đã dừng";
