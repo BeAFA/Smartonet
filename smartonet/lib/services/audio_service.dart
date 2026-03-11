@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -17,71 +18,60 @@ class AudioService {
 
   final AudioPlayer _player = AudioPlayer();
   bool _initialized = false;
+  bool _isCancelRequested = false;
+
+  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(children: []);
+  Timer? _previewTimer;
 
   Future<void> init() async {
     if (_initialized) return;
+    await _configureSessionUsage(AndroidAudioUsage.alarm);
+    _initialized = true;
+  }
 
-    // Cấu hình Session để không bị xung đột với các app khác
+  Future<void> _configureSessionUsage(AndroidAudioUsage usage) async {
     final session = await AudioSession.instance;
     await session.configure(
-      const AudioSessionConfiguration(
+      AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playback,
         avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
         androidAudioAttributes: AndroidAudioAttributes(
           contentType: AndroidAudioContentType.music,
-          usage: AndroidAudioUsage.alarm,
+          usage: usage,
         ),
         androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
     );
-    _initialized = true;
   }
 
-  // Hàm nghe thử nhạc (Preview) khi chọn trong cài đặt
+  // =========================================================================
+  // CÁC HÀM CŨ ĐỂ KHÔNG BỊ LỖI Ở CÁC FILE KHÁC
+  // =========================================================================
+
   Future<void> playPreview({required String source}) async {
     await init();
-
-    // Reset player để tránh lỗi state
-    if (_player.playing) {
-      await _player.stop();
-    }
-
+    if (_player.playing) await _player.stop();
     try {
-      // Kiểm tra xem source là đường dẫn file hay asset
-      // Logic: Nếu đường dẫn chứa '/', khả năng cao là file hệ thống.
-      // Assets thường chỉ là 'assets/...'
-      bool isFile =
-          source.startsWith('/') || source.contains(Platform.pathSeparator);
-
-      // Kiểm tra kỹ hơn nếu là file
+      bool isFile = source.startsWith('/') || source.contains(Platform.pathSeparator);
       if (isFile) {
         if (await File(source).exists()) {
           await _player.setFilePath(source);
         } else {
-          // Fallback nếu file lỗi -> Chạy nhạc mặc định
           await _player.setAsset('assets/Sounds/Default/alarm_digital.wav');
         }
       } else {
-        // Nếu là asset
         await _player.setAsset(source);
       }
-
       await _player.setVolume(1.0);
-      await _player.setLoopMode(LoopMode.off); // Nghe thử thì không cần lặp
+      await _player.setLoopMode(LoopMode.off);
       await _player.play();
     } catch (e) {
       _log.warning("Lỗi phát nhạc preview: $e");
     }
   }
 
-  // Dùng hàm này để tắt nhạc nghe thử
-  Future<void> stopPreview() async {
-    if (_player.playing) {
-      await _player.stop();
-    }
-  }
-
   void dispose() {
+    _previewTimer?.cancel();
     _player.dispose();
   }
 
@@ -90,9 +80,7 @@ class AudioService {
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg'],
     );
-    if (result != null) {
-      return result.files.single.path;
-    }
+    if (result != null) return result.files.single.path;
     return null;
   }
 
@@ -101,21 +89,19 @@ class AudioService {
       final manifestContent = await rootBundle.loadString('AssetManifest.json');
       final Map<String, dynamic> manifestMap = json.decode(manifestContent);
       return manifestMap.keys
-          .where(
-            (key) =>
-                key.startsWith('assets/Sounds/Default/') &&
-                (key.endsWith('.mp3') || key.endsWith('.wav')),
-          )
+          .where((key) => key.startsWith('assets/Sounds/Default/') && (key.endsWith('.mp3') || key.endsWith('.wav')))
           .toList();
     } catch (e) {
-      _log.warning("Không thể đọc AssetManifest: $e");
       return ['assets/Sounds/Default/alarm_digital.wav'];
     }
   }
 
   Future<String> _getCustomizeDirectoryPath() async {
     final directory = await getApplicationDocumentsDirectory();
-    return p.join(directory.path, 'Sounds', 'Customize');
+    final customPath = p.join(directory.path, 'Sounds', 'Customize');
+    final dir = Directory(customPath);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return customPath;
   }
 
   Future<List<String>> getCustomSounds() async {
@@ -124,9 +110,7 @@ class AudioService {
     List<String> sounds = [];
     if (await dir.exists()) {
       await for (var entity in dir.list()) {
-        if (entity is File) {
-          sounds.add(entity.path);
-        }
+        if (entity is File) sounds.add(entity.path);
       }
     }
     return sounds;
@@ -137,15 +121,17 @@ class AudioService {
     if (pickedPath != null) {
       final customPath = await _getCustomizeDirectoryPath();
       final originalFileName = p.basename(pickedPath);
+      final targetPath = p.join(customPath, originalFileName);
+      final targetFile = File(targetPath);
 
-      // Gắn timestamp để tránh trùng tên file
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final safeFileName = '${timestamp}_$originalFileName';
+      if (await targetFile.exists()) {
+        _log.info("File '$originalFileName' đã tồn tại. Dùng lại file cũ.");
+        return targetPath;
+      }
 
-      final savedPath = p.join(customPath, safeFileName);
-      final file = File(pickedPath);
-      await file.copy(savedPath);
-      return savedPath;
+      await File(pickedPath).copy(targetPath);
+      _log.info("Đã thêm nhạc mới thành công: $originalFileName");
+      return targetPath;
     }
     return null;
   }
@@ -153,9 +139,145 @@ class AudioService {
   Future<void> deleteCustomSounds(List<String> pathsToDelete) async {
     for (String path in pathsToDelete) {
       final file = File(path);
-      if (await file.exists()) {
-        await file.delete();
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<bool> deleteCustomAudioByKeyword(String keyword) async {
+    final customSounds = await getCustomSounds();
+    if (customSounds.isEmpty) return false;
+
+    if (keyword.toLowerCase() == 'all' || keyword.toLowerCase() == 'tất cả') {
+      await deleteCustomSounds(customSounds);
+      return true;
+    }
+
+    List<String> toDelete = customSounds.where((path) {
+      return p.basename(path).toLowerCase().contains(keyword.toLowerCase());
+    }).toList();
+
+    if (toDelete.isNotEmpty) {
+      await deleteCustomSounds(toDelete);
+      return true;
+    }
+    return false;
+  }
+
+  // =========================================================================
+  // CÁC KÊNH THÔNG TIN CHO GIAO DIỆN MÀN HÌNH PREVIEW
+  // =========================================================================
+  Stream<bool> get playingStream => _player.playingStream;
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+  Stream<Duration> get positionStream => _player.positionStream;
+  Stream<Duration?> get durationStream => _player.durationStream;
+  Stream<Duration> get bufferedPositionStream => _player.bufferedPositionStream;
+  Stream<SequenceState?> get sequenceStateStream => _player.sequenceStateStream;
+
+  Future<void> pausePreview() async {
+    _previewTimer?.cancel();
+    if (_player.playing) await _player.pause();
+  }
+
+  Future<void> resumePreview() async {
+    if (!_player.playing) await _player.play();
+  }
+
+  Future<void> stopPreview() async {
+    _previewTimer?.cancel();
+    _isCancelRequested = true;
+    if (_player.playing) await _player.stop();
+  }
+
+  Future<void> seek(Duration position) async => await _player.seek(position);
+  Future<void> skipToNext() async => await _player.seekToNext();
+  Future<void> skipToPrevious() async => await _player.seekToPrevious();
+
+  // =========================================================================
+  // HÀM PHÁT NHẠC NÂNG CẤP (DÙNG PLAYLIST ĐỂ CÓ NÚT NEXT/PREV)
+  // =========================================================================
+  Future<void> previewAdvanced({
+    String? keyword,
+    String targetType = 'both',
+    int playCount = 1,
+    int? durationInSeconds,
+  }) async {
+    _isCancelRequested = false;
+    List<String> allPaths = [];
+    if (targetType == 'custom' || targetType == 'both') allPaths.addAll(await getCustomSounds());
+    if (targetType == 'default' || targetType == 'both') allPaths.addAll(await getDefaultSounds());
+
+    if (keyword != null && keyword.isNotEmpty && keyword.toLowerCase() != 'all') {
+      allPaths = allPaths.where((path) => p.basename(path).toLowerCase().contains(keyword.toLowerCase())).toList();
+    }
+
+    if (allPaths.isEmpty) {
+      _log.warning("Không tìm thấy bài hát nào phù hợp.");
+      return;
+    }
+
+    if (playCount > 0 && playCount < allPaths.length) {
+      allPaths = allPaths.sublist(0, playCount);
+    }
+
+    await init();
+    _previewTimer?.cancel();
+
+    // Dựng Playlist thực thụ
+    List<AudioSource> sources = [];
+    for (String path in allPaths) {
+      bool isFile = path.startsWith('/') || path.contains(Platform.pathSeparator);
+      // Dùng 'tag' để mang tên file truyền lên UI
+      if (isFile && await File(path).exists()) {
+        sources.add(AudioSource.uri(Uri.file(path), tag: p.basename(path)));
+      } else if (!isFile) {
+        sources.add(AudioSource.asset(path, tag: p.basename(path)));
       }
+    }
+
+    await _playlist.clear();
+    await _playlist.addAll(sources);
+    await _player.setAudioSource(_playlist);
+
+    await _configureSessionUsage(AndroidAudioUsage.media);
+    
+    try {
+      await _player.setVolume(1.0);
+      await _player.setLoopMode(LoopMode.off);
+      _player.play();
+
+      if (durationInSeconds == null) {
+        // TRƯỜNG HỢP 1: Phát toàn bộ (Đợi nhạc chạy xong)
+        await _player.playerStateStream.firstWhere(
+          (state) => state.processingState == ProcessingState.completed || 
+                     state.processingState == ProcessingState.idle || 
+                     _isCancelRequested
+        );
+      } else {
+        // TRƯỜNG HỢP 2: Nghe thử giới hạn thời gian (Dùng Timer nhảy bài)
+        StreamSubscription? seqSub;
+        seqSub = _player.sequenceStateStream.listen((state) {
+          _previewTimer?.cancel();
+          if (state?.currentSource != null && _player.playing) {
+            _previewTimer = Timer(Duration(seconds: durationInSeconds), () {
+              if (_player.hasNext) {
+                _player.seekToNext();
+              } else {
+                _player.stop();
+              }
+            });
+          }
+        });
+        
+        // Vẫn phải chặn (await) lại để màn hình UI không bị tắt sớm
+        await _player.playerStateStream.firstWhere(
+          (state) => state.processingState == ProcessingState.completed || 
+                     state.processingState == ProcessingState.idle || 
+                     _isCancelRequested
+        );
+        seqSub.cancel();
+      }
+    } finally {
+      await _configureSessionUsage(AndroidAudioUsage.alarm);
     }
   }
 }

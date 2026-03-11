@@ -32,6 +32,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 
   void _addMessage(String text, bool isUser) {
+    if(!context.mounted) return;
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: isUser));
     });
@@ -75,8 +76,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
         final String type = responseMap['type'] ?? 'conversation';
         final String aiMessage = responseMap['message'] ?? 'Tôi đã hiểu.';
 
-        if (type == 'command') {
-          bool isSuccess = await AiActionExecutor.execute(responseMap);
+        if (type == 'command' && mounted) {
+          bool isSuccess = await AiActionExecutor.execute(responseMap, context: context);
           if (isSuccess) {
             _addMessage(aiMessage, false);
           } else {

@@ -659,90 +659,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // Future<void> showVoiceRecordDialog(BuildContext context) async {
-  //   if (_isProcessingVoice) return;
-  //   _isProcessingVoice = true;
-  //   try {
-  //     final connectivityResult = await Connectivity().checkConnectivity();
-  //     if (connectivityResult.contains(ConnectivityResult.none)) {
-  //       if (_isEWarningShowing) return;
-  //       _isEWarningShowing = true;
-  //       if (context.mounted) {
-  //         await showNoInternetDialog(context);
-  //       }
-  //       _isEWarningShowing = false;
-  //       return;
-  //     }
-  //     // final apiKey = await ApiKeyService.getApiKey();
-  //     // if (apiKey == null || apiKey.isEmpty) {
-  //     //   if (context.mounted) {
-  //     //     final isKeySaved = await showDialog<bool>(
-  //     //       context: context,
-  //     //       builder: (context) => const ApiKeyDialog(),
-  //     //     );
-
-  //     //     // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
-  //     //     if (isKeySaved != true) return;
-  //     //   }
-  //     // }
-  //     if (!context.mounted) return;
-  //     final result = await showDialog<String>(
-  //       context: context,
-  //       builder: (context) {
-  //         return const VoiceRecordDialog();
-  //       },
-  //     );
-  //     if (result != null) {
-  //       debugPrint("Text từ voice: $result");
-  //     }
-
-  //     if (result != null && result.isNotEmpty) {
-  //       if (!context.mounted) return;
-
-  //       showDialog(
-  //         context: context,
-  //         barrierDismissible: false,
-  //         builder: (ctx) => const Center(child: CircularProgressIndicator()),
-  //       );
-
-  //       final allData = await DbConnector.instance.getAllNotes();
-
-  //       final aiResultMap = await GeminiHttpService.analyzeIntent(
-  //         result,
-  //         currentData: allData,
-  //       );
-
-  //       if (!context.mounted) return;
-  //       Navigator.pop(context);
-
-  //       // Xử lý action
-  //       if (aiResultMap != null) {
-  //         bool success = await AiActionExecutor.execute(aiResultMap);
-  //         if (success && context.mounted) {
-  //           ScaffoldMessenger.of(
-  //             context,
-  //           ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
-  //           await _loadDataFromDB(); // Tải lại danh sách trên màn hình
-  //         } else if (context.mounted) {
-  //           ScaffoldMessenger.of(context).showSnackBar(
-  //             const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')),
-  //           );
-  //         }
-  //       } else {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(
-  //             content: Text(
-  //               'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
-  //             ),
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   } finally {
-  //     _isProcessingVoice = false;
-  //   }
-  // }
-
   Future<void> showVoiceRecordDialog(BuildContext context) async {
     if (_isProcessingVoice) return;
     _isProcessingVoice = true;
@@ -801,7 +717,7 @@ class _MainScreenState extends State<MainScreen> {
 
           // 4. Xử lý Action và cập nhật UI
           if (aiResultMap != null && context.mounted) {
-            bool success = await AiActionExecutor.execute(aiResultMap);
+            bool success = await AiActionExecutor.execute(aiResultMap, context: context);
 
             if (success) {
               // Sử dụng câu trả lời linh hoạt của AI (VD: "Dạ em đã xóa lịch cho anh rồi")

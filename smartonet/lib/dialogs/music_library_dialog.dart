@@ -25,6 +25,7 @@ class _MusicLibraryDialogState extends State<MusicLibraryDialog> {
   }
 
   Future<void> _loadSounds() async {
+    if (!context.mounted) return;
     setState(() => _isLoading = true);
     final defaults = await AudioService().getDefaultSounds();
     final customs = await AudioService().getCustomSounds();
@@ -43,9 +44,11 @@ class _MusicLibraryDialogState extends State<MusicLibraryDialog> {
   void _togglePlayPreview(String path) async {
     if (_currentlyPlayingPath == path) {
       await AudioService().stopPreview();
+      if (!mounted) return;
       setState(() => _currentlyPlayingPath = null);
     } else {
       await AudioService().playPreview(source: path);
+      if (!mounted) return;
       setState(() => _currentlyPlayingPath = path);
     }
   }

@@ -26,6 +26,7 @@ class _ApiKeyDialogState extends State<ApiKeyDialog> {
     if (key != null && key.isNotEmpty) {
       _keyController.text = key;
     }
+    if (!context.mounted) return;
     setState(() {
       _isLoading = false;
     });
