@@ -2,7 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiKeyService {
   static const _storage = FlutterSecureStorage();
-  static const _keyName = 'AIzaSyBWKW5tWirlnebYbbrNXSajU_WbwsrKBLE';
+  static const _keyName = 'REMOVED';
 
   // Lưu Key
   static Future<void> saveApiKey(String apiKey) async {

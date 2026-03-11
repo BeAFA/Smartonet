@@ -1,119 +1,83 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import '../database/models.dart';
 
 class GeminiHttpService {
-  static Future<Map<String, dynamic>?> analyzeIntent(String userText) async {
-    // 1. Lấy API Key từ Secure Storage
-    // final apiKey = await ApiKeyService.getApiKey();
-    // if (apiKey == null || apiKey.isEmpty) {
-    //   debugPrint('Chưa có API Key');
-    //   return null;
-    // }
-    String apiKey = 'AIzaSyBWKW5tWirlnebYbbrNXSajU_WbwsrKBLE';
+  static Future<Map<String, dynamic>?> analyzeIntent(
+    String userText, {
+    List<Note>? currentData,
+  }) async {
+    // String apiKey = await ApiKeyService.getApiKey() ?? '';
+    String apiKey =
+        'REMOVED'; // Xóa dòng này nếu dùng storage
 
-    // 2. Cấu hình Endpoint của Gemini 1.5 Flash
     final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$apiKey',
     );
 
     final now = DateTime.now();
 
+    // Tóm tắt dữ liệu hiện có để AI biết đường mà tìm ID
+    String contextData = "Danh sách trống.";
+    if (currentData != null && currentData.isNotEmpty) {
+      contextData = currentData
+          .map((n) {
+            String type = n.hasAppointment ? "Lịch hẹn" : "Ghi chú";
+            return "[$type] ID: ${n.id} | Tiêu đề: '${n.title}' | Nội dung: '${n.content}' | Thời gian: ${n.time.toIso8601String()}";
+          })
+          .join('\n');
+    }
+
     final prompt =
         '''
-Bạn là AI phân tích câu nói cho ứng dụng ghi chú và nhắc việc Smartonet.
+Bạn là AI trợ lý ảo thông minh cho ứng dụng ghi chú và lịch hẹn Smartonet.
 
-Thời gian hiện tại của hệ thống là: ${now.toIso8601String()}.
+Thời gian hiện tại của hệ thống: ${now.toIso8601String()}.
 
-Nhiệm vụ:
-Phân tích câu nói của người dùng và trả về DUY NHẤT một JSON hợp lệ.
-Không thêm markdown, không giải thích, không thêm văn bản ngoài JSON.
+DỮ LIỆU HIỆN CÓ CỦA NGƯỜI DÙNG:
+$contextData
 
-------------------------------------------------
+NHIỆM VỤ:
+Phân tích yêu cầu của người dùng và trả về DUY NHẤT một chuỗi JSON hợp lệ. Không sử dụng markdown (không có ```json).
 
-QUY TẮC PHÂN LOẠI
+QUY TẮC "type":
+1. Yêu cầu có tính hành động (tạo mới, cập nhật, xóa, lên kế hoạch, liệt kê) -> type: "command"
+2. Chỉ chào hỏi, tâm sự, hỏi đáp kiến thức chung -> type: "conversation"
 
-1. create_note
+QUY TẮC XỬ LÝ HÀNH ĐỘNG (Dành cho mảng "commands"):
+- Xử lý đơn & đa tác vụ: Dựa vào yêu cầu, tạo ra 1 hoặc NHIỀU đối tượng lệnh trong mảng "commands".
+- Lên kế hoạch/Danh sách/Chuỗi sự kiện: Nếu yêu cầu là một kế hoạch dài ngày, một danh sách nhiều mục, hoặc một chuỗi công việc (VD: lộ trình học, thực đơn, kế hoạch du lịch, danh sách việc làm), hãy TỰ ĐỘNG CHIA NHỎ một cách logic. 
+  -> Mỗi ngày / Mỗi hạng mục lớn sẽ là 1 lệnh "create" riêng biệt trong mảng.
+  -> Gom các chi tiết nhỏ của hạng mục đó vào trường "content".
+  -> Tự động nội suy và tịnh tiến thời gian "datetime" cho phù hợp với logic (VD: ngày 1, ngày 2...).
+- Cập nhật/Xóa: Phải đối chiếu với [DỮ LIỆU HIỆN CÓ] để lấy chính xác "target_id".
 
-Chọn "create_note" nếu câu nói KHÔNG chứa ngày hoặc giờ.
+CẤU TRÚC ĐỐI TƯỢNG TRONG "commands":
+- "action": "create", "update", hoặc "delete".
+- "target_id": Số nguyên ID (nếu update/delete) hoặc null (nếu create).
+- "has_appointment": true (nếu cần đổ chuông báo thức đúng giờ), false (nếu chỉ lưu dạng ghi chú thông thường).
+- "title": Tiêu đề súc tích (dưới 10 chữ).
+- "content": Nội dung chi tiết (nếu có).
+- "datetime": Định dạng "YYYY-MM-DDTHH:MM:00" (hoặc null nếu không có thời gian cụ thể).
+- "volume": 1 (nếu có báo thức) hoặc 0.
 
-Ví dụ:
-"Mua sữa"
-"Ghi chú ý tưởng làm app"
-
-Kết quả:
-action = create_note
-datetime = null
-volume = 0
-
-------------------------------------------------
-
-2. create_alarm
-
-Chọn "create_alarm" nếu câu nói có yếu tố thời gian.
-
-Các dạng thời gian có thể xuất hiện:
-- ngày mai
-- hôm nay
-- thứ 2, thứ 3...
-- tuần sau
-- ngày 25
-- 25/6
-
-TRƯỜNG HỢP A: Chỉ có NGÀY (không có giờ)
-
-Ví dụ:
-"Ngày mai mua sữa"
-"Thứ 2 nộp báo cáo"
-
-Kết quả:
-datetime = ngày đó + 08:00
-volume = 0 (chỉ rung)
-
-------------------------------------------------
-
-TRƯỜNG HỢP B: Có GIỜ cụ thể
-
-Ví dụ giờ:
-7h
-8h30
-14:00
-9 giờ sáng
-6 giờ tối
-
-Ví dụ câu:
-"Mai 7h mua sữa"
-"Thứ 2 lúc 9h họp"
-
-Kết quả:
-datetime = thời gian chính xác
-volume = 1 (phát âm thanh)
-
-------------------------------------------------
-
-QUY TẮC TITLE
-
-- Ngắn gọn
-- Dưới 10 chữ
-- Tóm tắt nội dung chính
-
-------------------------------------------------
-
-ĐỊNH DẠNG JSON BẮT BUỘC
-
+ĐỊNH DẠNG JSON BẮT BUỘC:
 {
-  "action": "create_alarm" hoặc "create_note",
-  "title": "Tiêu đề ngắn gọn",
-  "content": "Nội dung chi tiết nếu có, nếu không để rỗng",
-  "datetime": "YYYY-MM-DDTHH:MM:00 hoặc null",
-  "volume": 0 hoặc 1
+  "type": "command hoặc conversation",
+  "message": "Câu phản hồi giao tiếp tự nhiên bằng tiếng Việt để báo cáo kết quả cho người dùng.",
+  "commands": [
+    {
+      "action": "create | update | delete",
+      "target_id": 123 | null,
+      "has_appointment": true | false,
+      "title": "Tiêu đề",
+      "content": "Nội dung",
+      "datetime": "2026-03-12T08:00:00 | null",
+      "volume": 0 | 1
+    }
+  ]
 }
-
-Quy tắc datetime:
-- create_note → datetime = null
-- create_alarm → phải chuyển đổi thời gian dựa trên thời gian hệ thống
-
-------------------------------------------------
 
 Câu của người dùng:
 "$userText"
@@ -127,9 +91,7 @@ Câu của người dùng:
           ],
         },
       ],
-      "generationConfig": {
-        "responseMimeType": "application/json",
-      },
+      "generationConfig": {"responseMimeType": "application/json"},
     });
 
     try {
@@ -141,17 +103,22 @@ Câu của người dùng:
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final String textResponse =
+        String textResponse =
             data['candidates'][0]['content']['parts'][0]['text'];
+
+        // --- ĐOẠN MỚI THÊM: Xóa bỏ các ký tự markdown thừa ---
+        textResponse = textResponse
+            .replaceAll('```json', '')
+            .replaceAll('```', '')
+            .trim();
 
         return jsonDecode(textResponse);
       } else {
         debugPrint('Lỗi HTTP: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      debugPrint('Lỗi khi gọi API Gemini: $e');
+      debugPrint('Lỗi khi phân tích JSON từ AI: $e');
     }
-
     return null;
   }
 }

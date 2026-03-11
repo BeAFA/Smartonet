@@ -19,6 +19,7 @@ import '../widgets/section_header.dart';
 import '../dialogs/note_form_dialog.dart';
 import '../widgets/smart_card.dart';
 import '../dialogs/music_library_dialog.dart';
+import '../screens/ai_chat_screen.dart';
 
 class MainScreen extends StatefulWidget {
   final bool showPermissionWarning;
@@ -497,9 +498,13 @@ class _MainScreenState extends State<MainScreen> {
           _buildAllList(filterOnlyAppointments: true), // Tab 2: Lịch hẹn
         ],
       ),
-      floatingActionButton: _buildCustomFAB(context),
+      floatingActionButton: Transform.translate(
+        offset: const Offset(0, 9),
+        child: _buildCustomFAB(context),
+      ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       bottomNavigationBar: NavigationBar(
+        height: 65,
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) {
           setState(() {
@@ -545,82 +550,205 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildCustomFAB(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        height: 55,
-        width: 220,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(30),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black26,
-              blurRadius: 6,
-              offset: const Offset(0, 3),
+    return Container(
+      height: 55,
+      width: 330, // Tăng chiều rộng để đủ chỗ cho 3 nút
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: const [
+          // Thêm const cho tối ưu
+          BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3)),
+        ],
+      ),
+      child: Material(
+        color: const Color(0xFFE8EAF6),
+        borderRadius: BorderRadius.circular(30),
+        clipBehavior: Clip.hardEdge,
+        child: Row(
+          children: [
+            // Nút 1: Thủ công (Giữ nguyên logic)
+            Expanded(
+              child: InkWell(
+                onTap: () => _openNoteForm(context),
+                child: const Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.edit, color: Color(0xFF3F51B5), size: 18),
+                      SizedBox(width: 4),
+                      Text(
+                        "Thủ công",
+                        style: TextStyle(
+                          color: Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            Container(width: 1, height: 30, color: Colors.grey.shade400),
+
+            // Nút 2: Chat AI (Mới)
+            Expanded(
+              child: InkWell(
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AiChatScreen()),
+                  );
+                  _loadDataFromDB();
+                },
+                child: const Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.chat_bubble_outline,
+                        color: Colors.teal,
+                        size: 18,
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        "Chat",
+                        style: TextStyle(
+                          color: Colors.teal,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            Container(width: 1, height: 30, color: Colors.grey.shade400),
+
+            // Nút 3: Giọng nói (Giữ nguyên logic)
+            Expanded(
+              child: InkWell(
+                onTap: () {
+                  showVoiceRecordDialog(context);
+                },
+                child: const Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.mic, color: Colors.redAccent, size: 18),
+                      SizedBox(width: 4),
+                      Text(
+                        "Giọng nói",
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
-        ),
-        child: Material(
-          color: const Color(0xFFE8EAF6),
-          borderRadius: BorderRadius.circular(30),
-          clipBehavior: Clip.hardEdge,
-          child: Row(
-            children: [
-              Expanded(
-                child: InkWell(
-                  onTap: () => _openNoteForm(context),
-                  child: const Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.edit, color: Color(0xFF3F51B5), size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          "Thủ công",
-                          style: TextStyle(
-                            color: Color(0xFF3F51B5),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              Container(width: 1, height: 30, color: Colors.grey),
-              Expanded(
-                child: InkWell(
-                  onTap: () {
-                    showVoiceRecordDialog(context);
-                  },
-                  child: const Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.mic, color: Colors.redAccent, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          "Giọng nói",
-                          style: TextStyle(
-                            color: Colors.redAccent,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
   }
 
+  // Future<void> showVoiceRecordDialog(BuildContext context) async {
+  //   if (_isProcessingVoice) return;
+  //   _isProcessingVoice = true;
+  //   try {
+  //     final connectivityResult = await Connectivity().checkConnectivity();
+  //     if (connectivityResult.contains(ConnectivityResult.none)) {
+  //       if (_isEWarningShowing) return;
+  //       _isEWarningShowing = true;
+  //       if (context.mounted) {
+  //         await showNoInternetDialog(context);
+  //       }
+  //       _isEWarningShowing = false;
+  //       return;
+  //     }
+  //     // final apiKey = await ApiKeyService.getApiKey();
+  //     // if (apiKey == null || apiKey.isEmpty) {
+  //     //   if (context.mounted) {
+  //     //     final isKeySaved = await showDialog<bool>(
+  //     //       context: context,
+  //     //       builder: (context) => const ApiKeyDialog(),
+  //     //     );
+
+  //     //     // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
+  //     //     if (isKeySaved != true) return;
+  //     //   }
+  //     // }
+  //     if (!context.mounted) return;
+  //     final result = await showDialog<String>(
+  //       context: context,
+  //       builder: (context) {
+  //         return const VoiceRecordDialog();
+  //       },
+  //     );
+  //     if (result != null) {
+  //       debugPrint("Text từ voice: $result");
+  //     }
+
+  //     if (result != null && result.isNotEmpty) {
+  //       if (!context.mounted) return;
+
+  //       showDialog(
+  //         context: context,
+  //         barrierDismissible: false,
+  //         builder: (ctx) => const Center(child: CircularProgressIndicator()),
+  //       );
+
+  //       final allData = await DbConnector.instance.getAllNotes();
+
+  //       final aiResultMap = await GeminiHttpService.analyzeIntent(
+  //         result,
+  //         currentData: allData,
+  //       );
+
+  //       if (!context.mounted) return;
+  //       Navigator.pop(context);
+
+  //       // Xử lý action
+  //       if (aiResultMap != null) {
+  //         bool success = await AiActionExecutor.execute(aiResultMap);
+  //         if (success && context.mounted) {
+  //           ScaffoldMessenger.of(
+  //             context,
+  //           ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
+  //           await _loadDataFromDB(); // Tải lại danh sách trên màn hình
+  //         } else if (context.mounted) {
+  //           ScaffoldMessenger.of(context).showSnackBar(
+  //             const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')),
+  //           );
+  //         }
+  //       } else {
+  //         ScaffoldMessenger.of(context).showSnackBar(
+  //           const SnackBar(
+  //             content: Text(
+  //               'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
+  //             ),
+  //           ),
+  //         );
+  //       }
+  //     }
+  //   } finally {
+  //     _isProcessingVoice = false;
+  //   }
+  // }
+
   Future<void> showVoiceRecordDialog(BuildContext context) async {
     if (_isProcessingVoice) return;
     _isProcessingVoice = true;
+
     try {
+      // 1. Kiểm tra kết nối mạng
       final connectivityResult = await Connectivity().checkConnectivity();
       if (connectivityResult.contains(ConnectivityResult.none)) {
         if (_isEWarningShowing) return;
@@ -631,66 +759,85 @@ class _MainScreenState extends State<MainScreen> {
         _isEWarningShowing = false;
         return;
       }
-      // final apiKey = await ApiKeyService.getApiKey();
-      // if (apiKey == null || apiKey.isEmpty) {
-      //   if (context.mounted) {
-      //     final isKeySaved = await showDialog<bool>(
-      //       context: context,
-      //       builder: (context) => const ApiKeyDialog(),
-      //     );
 
-      //     // Nếu người dùng nhấn "Hủy" hoặc không lưu được, dừng tính năng Voice
-      //     if (isKeySaved != true) return;
-      //   }
-      // }
       if (!context.mounted) return;
+
+      // 2. Mở hộp thoại ghi âm giọng nói
       final result = await showDialog<String>(
         context: context,
         builder: (context) {
           return const VoiceRecordDialog();
         },
       );
+
       if (result != null) {
         debugPrint("Text từ voice: $result");
       }
 
+      // 3. Nếu người dùng có nói và bấm xác nhận
       if (result != null && result.isNotEmpty) {
         if (!context.mounted) return;
 
-        // Hiện loading mờ
+        // Hiện loading mờ (Vòng quay chờ AI)
         showDialog(
           context: context,
-          barrierDismissible: false,
+          barrierDismissible: false, // Không cho bấm ra ngoài để tắt
           builder: (ctx) => const Center(child: CircularProgressIndicator()),
         );
 
-        // Gửi HTTP Request tới Gemini
-        final aiResultMap = await GeminiHttpService.analyzeIntent(result);
+        // Bọc Try-Catch riêng cho phần gọi API để chống kẹt Loading
+        try {
+          final allData = await DbConnector.instance.getAllNotes();
 
-        if (!context.mounted) return;
-        Navigator.pop(context);
+          final aiResultMap = await GeminiHttpService.analyzeIntent(
+            result,
+            currentData: allData,
+          );
 
-        // Xử lý action
-        if (aiResultMap != null) {
-          bool success = await AiActionExecutor.execute(aiResultMap);
-          if (success && context.mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('Đã tạo thành công!')));
-            await _loadDataFromDB(); // Tải lại danh sách trên màn hình
+          // TẮT LOADING NGAY LẬP TỨC khi có phản hồi (hoặc null)
+          if (context.mounted) {
+            Navigator.pop(context);
+          }
+
+          // 4. Xử lý Action và cập nhật UI
+          if (aiResultMap != null && context.mounted) {
+            bool success = await AiActionExecutor.execute(aiResultMap);
+
+            if (success) {
+              // Sử dụng câu trả lời linh hoạt của AI (VD: "Dạ em đã xóa lịch cho anh rồi")
+              final String aiMessage =
+                  aiResultMap['message'] ?? 'Thao tác thành công!';
+              if (context.mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(aiMessage)));
+              }
+              await _loadDataFromDB(); // Tải lại danh sách trên màn hình
+            } else if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Lỗi khi lưu/cập nhật dữ liệu.')),
+              );
+            }
           } else if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Lỗi khi lưu dữ liệu.')),
+              const SnackBar(
+                content: Text(
+                  'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
+                ),
+              ),
             );
           }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Trợ lý không phân tích được lệnh, vui lòng thử lại.',
+        } catch (e) {
+          // BẮT LỖI: Nếu API lỗi, phải tắt loading và báo cho người dùng
+          debugPrint("Lỗi khi xử lý giọng nói với AI: $e");
+          if (context.mounted) {
+            Navigator.pop(context); // Tắt loading
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Đã có lỗi hệ thống xảy ra, vui lòng thử lại.'),
               ),
-            ),
-          );
+            );
+          }
         }
       }
     } finally {
@@ -774,7 +921,7 @@ class _MainScreenState extends State<MainScreen> {
                     onDelete: () => _handleDelete(recentNotes[i].id!),
                   ),
                 ),
-          const SizedBox(height: 80),
+          const SizedBox(height: 50),
         ],
       ),
     );
@@ -1113,6 +1260,7 @@ class _MainScreenState extends State<MainScreen> {
                   },
                 ),
         ),
+        const SizedBox(height: 65),
       ],
     );
   }

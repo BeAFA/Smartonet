@@ -87,6 +87,7 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
   }
 
   void onSpeechResult(SpeechRecognitionResult result) {
+    if (!context.mounted) return;
     setState(() {
       lastWords = result.recognizedWords;
     });
@@ -95,6 +96,7 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
 
   void stopListening() async {
     await speechToText.stop();
+    if (!context.mounted) return;
     setState(() {
       isRecording = false;
       status = "Đã dừng";
@@ -103,6 +105,7 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
 
   void restartListening() async {
     await speechToText.stop();
+    if (!context.mounted) return;
 
     setState(() {
       lastWords = "";
@@ -114,6 +117,8 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
   }
 
   void stopRecord() {
+    if (!context.mounted) return;
+
     setState(() {
       isRecording = false;
       status = "Ghi âm hoàn tất";
