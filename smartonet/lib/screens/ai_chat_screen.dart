@@ -4,6 +4,7 @@ import '../services/ai_action_executor.dart';
 import '../dialogs/voice_dialogs.dart';
 import '../services/dbconnector.dart';
 import '../database/models.dart';
+import '../screens/voice_chat_screen.dart';
 
 class ChatMessage {
   final String text;
@@ -252,7 +253,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: _handleVoiceInput,
+          onTap: () {
+            // Điều hướng sang màn hình đối thoại trực tiếp
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const VoiceChatScreen()),
+            );
+          },
           borderRadius: BorderRadius.circular(30),
           child: Container(
             padding: const EdgeInsets.symmetric(
