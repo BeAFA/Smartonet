@@ -12,10 +12,9 @@ class GeminiHttpService {
     String? chatHistory,
   }) async {
     // Tự động lấy API Key từ storage
-    String apiKey = '';
 
     final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$apiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=',
     );
 
     String contextData = "Danh sách trống.";

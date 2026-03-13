@@ -28,7 +28,7 @@ class GeminiLiveService {
   int _retry = 0;
 
   String _url(String apiKey) {
-    return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey";
+    return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
   }
 
   Future<void> connect(String apiKey) async {
@@ -212,6 +212,44 @@ class GeminiLiveService {
   void _setState(GeminiConnectionState s) {
     _state = s;
     debugPrint("WebSocket state → $_state");
+  }
+
+  Future<void> sendUserAudio(List<Uint8List> chunks) async {
+    if (!_setupComplete || _state != GeminiConnectionState.ready) return;
+
+    for (final audio in chunks) {
+      final message = {
+        "realtimeInput": {
+          "mediaChunks": [
+            {"mimeType": "audio/pcm;rate=16000", "data": base64Encode(audio)},
+          ],
+        },
+      };
+
+      _channel?.sink.add(jsonEncode(message));
+    }
+
+    /// báo cho Gemini biết user đã nói xong
+    final turnComplete = {
+      "clientContent": {
+        "turns": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "inlineData": {
+                  "mimeType": "audio/pcm;rate=16000",
+                  "data": "BASE64_AUDIO",
+                },
+              },
+            ],
+          },
+        ],
+        "turnComplete": true,
+      },
+    };
+
+    _channel?.sink.add(jsonEncode(turnComplete));
   }
 
   void dispose() {

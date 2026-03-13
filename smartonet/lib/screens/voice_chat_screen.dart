@@ -12,7 +12,10 @@ class VoiceChatScreen extends StatefulWidget {
 }
 
 class _VoiceChatScreenState extends State<VoiceChatScreen> {
+
   late VoiceChatService chatService;
+
+  bool connected = false;
 
   @override
   void initState() {
@@ -32,10 +35,14 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
   Future<void> startChat() async {
     const apiKey = "AIzaSy...";
     await chatService.start(apiKey);
+    connected = true;
+    setState(() {});
   }
 
   Future<void> stopChat() async {
     await chatService.stop();
+    connected = false;
+    setState(() {});
   }
 
   @override
@@ -44,115 +51,163 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
     super.dispose();
   }
 
+  String getStatus() {
+    switch (chatService.state) {
+      case VoiceState.listening:
+        return "Bạn đang nói...";
+      case VoiceState.thinking:
+        return "AI đang suy nghĩ...";
+      case VoiceState.speaking:
+        return "AI đang trả lời...";
+      case VoiceState.idle:
+        return connected ? "Sẵn sàng nói" : "Chưa kết nối";
+    }
+  }
+
+  Color getColor() {
+    switch (chatService.state) {
+      case VoiceState.listening:
+        return Colors.red;
+      case VoiceState.thinking:
+        return Colors.orange;
+      case VoiceState.speaking:
+        return Colors.purple;
+      case VoiceState.idle:
+        return Colors.blue;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+
     final state = chatService.state;
 
-    String status = "";
-
-    switch (state) {
-      case VoiceState.listening:
-        status = "Đang nghe...";
-        break;
-      case VoiceState.thinking:
-        status = "Đang xử lý...";
-        break;
-      case VoiceState.speaking:
-        status = "AI đang nói...(Chạm để ngắt)";
-        break;
-      case VoiceState.idle:
-        status = "Chạm để bắt đầu";
-        break;
-    }
-
     return Scaffold(
-      appBar: AppBar(title: const Text("Voice AI Chat"), centerTitle: true),
+      appBar: AppBar(
+        title: const Text("Voice AI Chat"),
+        centerTitle: true,
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Icon chữ "AI" tĩnh màu xanh
-            GestureDetector(
-              onTap: () {
-                // Chỉ cho phép ngắt lời khi AI đang nói hoặc đang xử lý
-                if (state == VoiceState.speaking ||
-                    state == VoiceState.thinking) {
-                  chatService.interrupt();
-                }
-              },
-              child: Container(
-                width: 180,
-                height: 180,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: state == VoiceState.speaking
-                      ? Colors.purple.withValues(
-                          alpha: 0.15,
-                        ) // Đổi màu xíu khi đang nói cho sinh động
-                      : Colors.blue.withValues(alpha: 0.15),
+
+            /// AI AVATAR
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width: 180,
+              height: 180,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: getColor().withValues(alpha: 0.15),
+              ),
+              child: Text(
+                "AI",
+                style: TextStyle(
+                  fontSize: 80,
+                  fontWeight: FontWeight.bold,
+                  color: getColor(),
                 ),
-                child: Text(
-                  "AI",
-                  style: TextStyle(
-                    fontSize: 80,
-                    fontWeight: FontWeight.bold,
-                    color: state == VoiceState.speaking
-                        ? Colors.purple
-                        : Colors.blue,
-                  ),
-                ),
+              ),
+            ),
+
+            const SizedBox(height: 30),
+
+            Text(
+              getStatus(),
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w500,
               ),
             ),
 
             const SizedBox(height: 40),
 
-            Text(
-              status,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w500),
+            /// MIC BUTTON
+            ElevatedButton.icon(
+              onPressed: !connected
+                  ? null
+                  : () async {
+
+                      if (state == VoiceState.idle) {
+                        await chatService.startListening();
+                      } else if (state == VoiceState.listening) {
+                        await chatService.stopListening();
+                      }
+                    },
+              icon: Icon(
+                state == VoiceState.listening
+                    ? Icons.stop
+                    : Icons.mic,
+              ),
+              label: Text(
+                state == VoiceState.listening
+                    ? "Dừng ghi âm"
+                    : "Bắt đầu nói",
+              ),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            /// AUDIO CONTROL
+            ElevatedButton.icon(
+              onPressed: !connected
+                  ? null
+                  : () async {
+
+                      if (state == VoiceState.speaking) {
+                        await chatService.stopAudio();
+                      } else {
+                        await chatService.playLastAudio();
+                      }
+                    },
+              icon: Icon(
+                state == VoiceState.speaking
+                    ? Icons.stop_circle
+                    : Icons.replay,
+              ),
+              label: Text(
+                state == VoiceState.speaking
+                    ? "Dừng AI"
+                    : "Phát lại",
+              ),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+              ),
             ),
 
             const SizedBox(height: 50),
 
-            // Nút điều khiển (Bắt đầu / Tạm dừng) ở dưới cùng
-            InkWell(
-              onTap: () {
-                if (state == VoiceState.idle) {
-                  startChat();
+            /// CONNECT BUTTON
+            ElevatedButton.icon(
+              onPressed: () async {
+
+                if (!connected) {
+                  await startChat();
                 } else {
-                  stopChat();
+                  await stopChat();
                 }
               },
-              borderRadius: BorderRadius.circular(30),
-              child: Container(
+              icon: Icon(
+                connected ? Icons.link_off : Icons.link,
+              ),
+              label: Text(
+                connected ? "Ngắt kết nối AI" : "Kết nối AI",
+              ),
+              style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 14,
-                ),
-                decoration: BoxDecoration(
-                  color: state == VoiceState.idle
-                      ? Colors.blue
-                      : Colors.redAccent,
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      state == VoiceState.idle ? Icons.play_arrow : Icons.pause,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      state == VoiceState.idle ? "Bắt đầu" : "Tạm dừng",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                  horizontal: 40,
+                  vertical: 16,
                 ),
               ),
             ),

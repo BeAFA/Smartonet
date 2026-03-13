@@ -8,7 +8,10 @@ class AudioPlayerService {
   bool _isStreaming = false;
   bool _disposed = false;
 
+  final List<Uint8List> _lastAudio = [];
+
   Future<void> init() async {
+
     if (_disposed) return;
 
     if (!_player.isOpen()) {
@@ -25,6 +28,8 @@ class AudioPlayerService {
     }
 
     if (_isStreaming) return;
+
+    _lastAudio.clear();
 
     await _player.startPlayerFromStream(
       codec: Codec.pcm16,
@@ -49,6 +54,7 @@ class AudioPlayerService {
 
     if (sink != null) {
       sink.add(chunk);
+      _lastAudio.add(chunk);
     }
   }
 
@@ -59,6 +65,23 @@ class AudioPlayerService {
     if (_isStreaming) {
       await _player.stopPlayer();
       _isStreaming = false;
+    }
+  }
+
+  /// replay audio cuối
+  Future<void> replay() async {
+
+    if (_lastAudio.isEmpty) return;
+
+    await stop();
+    await _startStream();
+
+    final sink = _player.uint8ListSink;
+
+    if (sink != null) {
+      for (final chunk in _lastAudio) {
+        sink.add(chunk);
+      }
     }
   }
 
