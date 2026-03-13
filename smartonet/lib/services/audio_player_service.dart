@@ -1,8 +1,7 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 
 class AudioPlayerService {
-
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
 
   bool _isStreaming = false;
@@ -11,7 +10,6 @@ class AudioPlayerService {
   final List<Uint8List> _lastAudio = [];
 
   Future<void> init() async {
-
     if (_disposed) return;
 
     if (!_player.isOpen()) {
@@ -20,7 +18,6 @@ class AudioPlayerService {
   }
 
   Future<void> _startStream() async {
-
     if (_disposed) return;
 
     if (!_player.isOpen()) {
@@ -43,7 +40,6 @@ class AudioPlayerService {
   }
 
   Future<void> addAudio(Uint8List chunk) async {
-
     if (_disposed) return;
 
     if (!_isStreaming) {
@@ -52,14 +48,17 @@ class AudioPlayerService {
 
     final sink = _player.uint8ListSink;
 
-    if (sink != null) {
+    if (sink == null) return;
+
+    try {
       sink.add(chunk);
       _lastAudio.add(chunk);
+    } catch (e) {
+      debugPrint("Audio write error: $e");
     }
   }
 
   Future<void> stop() async {
-
     if (_disposed) return;
 
     if (_isStreaming) {
@@ -70,7 +69,6 @@ class AudioPlayerService {
 
   /// replay audio cuối
   Future<void> replay() async {
-
     if (_lastAudio.isEmpty) return;
 
     await stop();
@@ -86,7 +84,6 @@ class AudioPlayerService {
   }
 
   Future<void> dispose() async {
-
     if (_disposed) return;
 
     await stop();

@@ -12,7 +12,6 @@ class VoiceChatScreen extends StatefulWidget {
 }
 
 class _VoiceChatScreenState extends State<VoiceChatScreen> {
-
   late VoiceChatService chatService;
 
   bool connected = false;
@@ -26,9 +25,12 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
       geminiService: GeminiLiveService(),
       audioService: AudioPlayerService(),
     );
-
     chatService.addListener(() {
       if (mounted) setState(() {});
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      startChat();
     });
   }
 
@@ -79,19 +81,12 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-
-    final state = chatService.state;
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Voice AI Chat"),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text("Voice AI Chat"), centerTitle: true),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
             /// AI AVATAR
             AnimatedContainer(
               duration: const Duration(milliseconds: 300),
@@ -111,99 +106,17 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
                 ),
               ),
             ),
-
             const SizedBox(height: 30),
-
-            Text(
-              getStatus(),
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-
-            const SizedBox(height: 40),
-
-            /// MIC BUTTON
-            ElevatedButton.icon(
-              onPressed: !connected
-                  ? null
-                  : () async {
-
-                      if (state == VoiceState.idle) {
-                        await chatService.startListening();
-                      } else if (state == VoiceState.listening) {
-                        await chatService.stopListening();
-                      }
-                    },
-              icon: Icon(
-                state == VoiceState.listening
-                    ? Icons.stop
-                    : Icons.mic,
-              ),
-              label: Text(
-                state == VoiceState.listening
-                    ? "Dừng ghi âm"
-                    : "Bắt đầu nói",
-              ),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            /// AUDIO CONTROL
-            ElevatedButton.icon(
-              onPressed: !connected
-                  ? null
-                  : () async {
-
-                      if (state == VoiceState.speaking) {
-                        await chatService.stopAudio();
-                      } else {
-                        await chatService.playLastAudio();
-                      }
-                    },
-              icon: Icon(
-                state == VoiceState.speaking
-                    ? Icons.stop_circle
-                    : Icons.replay,
-              ),
-              label: Text(
-                state == VoiceState.speaking
-                    ? "Dừng AI"
-                    : "Phát lại",
-              ),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 50),
-
-            /// CONNECT BUTTON
             ElevatedButton.icon(
               onPressed: () async {
-
                 if (!connected) {
                   await startChat();
                 } else {
                   await stopChat();
                 }
               },
-              icon: Icon(
-                connected ? Icons.link_off : Icons.link,
-              ),
-              label: Text(
-                connected ? "Ngắt kết nối AI" : "Kết nối AI",
-              ),
+              icon: Icon(connected ? Icons.link_off : Icons.link),
+              label: Text(connected ? "Ngắt kết nối AI" : "Kết nối AI"),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 40,

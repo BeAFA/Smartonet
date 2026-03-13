@@ -254,7 +254,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
-            // Điều hướng sang màn hình đối thoại trực tiếp
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const VoiceChatScreen()),

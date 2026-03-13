@@ -67,6 +67,9 @@ class GeminiLiveService {
     }
   }
 
+  final _audioCompleteController = StreamController<void>.broadcast();
+  Stream<void> get onAudioComplete => _audioCompleteController.stream;
+
   void _listen() {
     _socketSub = _channel!.stream.listen(
       (message) {
@@ -97,15 +100,26 @@ class GeminiLiveService {
 
           /// audio response
           if (data["serverContent"] != null) {
-            final parts = data["serverContent"]["modelTurn"]["parts"];
+            final server = data["serverContent"];
 
-            for (final part in parts) {
-              if (part["inlineData"] != null) {
-                final audioBase64 = part["inlineData"]["data"];
-                final audioBytes = base64Decode(audioBase64);
+            /// audio chunks
+            if (server["modelTurn"] != null) {
+              final parts = server["modelTurn"]["parts"];
 
-                _audioController.add(audioBytes);
+              for (final part in parts) {
+                if (part["inlineData"] != null) {
+                  final audioBase64 = part["inlineData"]["data"];
+                  final audioBytes = base64Decode(audioBase64);
+
+                  _audioController.add(audioBytes);
+                }
               }
+            }
+
+            /// AI nói xong
+            if (server["turnComplete"] == true) {
+              debugPrint("AI audio turn complete");
+              _audioCompleteController.add(null);
             }
           }
         } catch (e) {
@@ -253,7 +267,8 @@ class GeminiLiveService {
   }
 
   void dispose() {
-    disconnect();
-    _audioController.close();
-  }
+  disconnect();
+  _audioController.close();
+  _audioCompleteController.close();
+}
 }
