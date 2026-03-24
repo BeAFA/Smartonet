@@ -190,7 +190,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
     _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
       await FlutterVolumeController.setVolume(
         newVolume,
-        stream: AudioStream.alarm,
+        stream: AudioStream.music,
       );
 
       String source =
@@ -449,7 +449,7 @@ class _NoteFormDialogState extends State<NoteFormDialog> {
                       },
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   Expanded(
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.access_time, size: 16),

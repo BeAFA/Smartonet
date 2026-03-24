@@ -25,7 +25,7 @@ class AudioService {
 
   Future<void> init() async {
     if (_initialized) return;
-    await _configureSessionUsage(AndroidAudioUsage.alarm);
+    await _configureSessionUsage(AndroidAudioUsage.media);
     _initialized = true;
   }
 
@@ -277,7 +277,7 @@ class AudioService {
         seqSub.cancel();
       }
     } finally {
-      await _configureSessionUsage(AndroidAudioUsage.alarm);
+      await _configureSessionUsage(AndroidAudioUsage.media);
     }
   }
 }
