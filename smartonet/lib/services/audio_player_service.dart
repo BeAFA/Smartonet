@@ -7,6 +7,8 @@ class AudioPlayerService {
   bool _isStreaming = false;
   bool _disposed = false;
 
+  bool _isStarting = false;
+
   final List<Uint8List> _lastAudio = [];
 
   Future<void> init() async {
@@ -18,33 +20,45 @@ class AudioPlayerService {
   }
 
   Future<void> _startStream() async {
-    if (_disposed) return;
+    if (_disposed || _isStreaming || _isStarting) return;
+    _isStarting = true;
+    try {
+      if (!_player.isOpen()) {
+        await init();
+      }
 
-    if (!_player.isOpen()) {
-      await init();
+      if (_isStreaming) return;
+
+      _lastAudio.clear();
+
+      await _player.startPlayerFromStream(
+        codec: Codec.pcm16,
+        interleaved: true,
+        numChannels: 1,
+        sampleRate: 24000,
+        bufferSize: 4096,
+      );
+
+      _isStreaming = true;
+    } catch (e) {
+      debugPrint("⚠️ Lỗi khởi động loa: $e");
+    } finally {
+      _isStarting = false; // Mở khóa khi khởi động xong
     }
-
-    if (_isStreaming) return;
-
-    _lastAudio.clear();
-
-    await _player.startPlayerFromStream(
-      codec: Codec.pcm16,
-      interleaved: true,
-      numChannels: 1,
-      sampleRate: 24000,
-      bufferSize: 4096,
-    );
-
-    _isStreaming = true;
   }
 
   Future<void> addAudio(Uint8List chunk) async {
     if (_disposed) return;
 
+    while (_isStarting) {
+      await Future.delayed(const Duration(milliseconds: 10));
+    }
+
     if (!_isStreaming) {
       await _startStream();
     }
+
+    if (!_isStreaming) return;
 
     final sink = _player.uint8ListSink;
 
@@ -59,11 +73,19 @@ class AudioPlayerService {
   }
 
   Future<void> stop() async {
-    if (_disposed) return;
+if (_disposed || !_isStreaming) return;
 
-    if (_isStreaming) {
+    _isStreaming = false;
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    // if (_isStreaming) {
+    //   await _player.stopPlayer();
+    //   _isStreaming = false;
+    // }
+    try {
       await _player.stopPlayer();
-      _isStreaming = false;
+    } catch (e) {
+      debugPrint("⚠️ Lỗi khi tắt loa: $e");
     }
   }
 

@@ -19,26 +19,24 @@ class GeminiLiveService {
   final _audioController = StreamController<Uint8List>.broadcast();
   Stream<Uint8List> get audioStream => _audioController.stream;
 
+  final _audioCompleteController = StreamController<void>.broadcast();
+  Stream<void> get onAudioComplete => _audioCompleteController.stream;
+
   GeminiConnectionState _state = GeminiConnectionState.idle;
   GeminiConnectionState get state => _state;
-
-  String? _apiKey = '';
 
   bool _setupComplete = false;
   int _retry = 0;
 
-  String _url(String apiKey) {
-    return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
-  }
+  final String _serverUrl = "ws://192.168.1.157:8080/ws";
 
-  Future<void> connect(String apiKey) async {
+  Future<void> connect() async {
     if (_state == GeminiConnectionState.connecting ||
         _state == GeminiConnectionState.connected ||
         _state == GeminiConnectionState.ready) {
       return;
     }
 
-    _apiKey = apiKey;
     _setupComplete = false;
 
     await _socketSub?.cancel();
@@ -47,28 +45,24 @@ class GeminiLiveService {
     _setState(GeminiConnectionState.connecting);
 
     try {
-      final uri = Uri.parse(_url(apiKey));
-      debugPrint("Connecting websocket → $uri");
+      final uri = Uri.parse(_serverUrl);
+      debugPrint("🔗 Đang kết nối tới máy chủ trung chuyển → $uri");
 
       _channel = WebSocketChannel.connect(uri);
       await _channel!.ready;
 
-      debugPrint("WebSocket connected");
+      debugPrint("✅ Đã kết nối WebSocket thành công");
 
       _setState(GeminiConnectionState.connected);
-
       _retry = 0;
 
       _listen();
-      _sendSetup();
+      _sendSetup(); // Gửi lệnh Setup ngay sau khi kết nối
     } catch (e) {
-      debugPrint("WebSocket connection error: $e");
+      debugPrint("❌ Lỗi kết nối WebSocket: $e");
       _reconnect();
     }
   }
-
-  final _audioCompleteController = StreamController<void>.broadcast();
-  Stream<void> get onAudioComplete => _audioCompleteController.stream;
 
   void _listen() {
     _socketSub = _channel!.stream.listen(
@@ -81,92 +75,84 @@ class GeminiLiveService {
           } else if (message is Uint8List) {
             jsonString = utf8.decode(message);
           } else {
-            debugPrint("Unknown message type: ${message.runtimeType}");
             return;
           }
 
-          debugPrint("WS message: $jsonString");
-
           final data = jsonDecode(jsonString);
 
-          /// setup complete
+          // 1. Nhận xác nhận Setup Complete từ Gemini
           if (data["setupComplete"] != null) {
-            debugPrint("Gemini setup complete");
-
+            debugPrint("🎯 Gemini đã nhận Setup. Sẵn sàng đàm thoại!");
             _setupComplete = true;
             _setState(GeminiConnectionState.ready);
             return;
           }
 
-          /// audio response
+          // 2. Nhận dữ liệu âm thanh từ Gemini trả về
           if (data["serverContent"] != null) {
             final server = data["serverContent"];
 
-            /// audio chunks
             if (server["modelTurn"] != null) {
               final parts = server["modelTurn"]["parts"];
-
               for (final part in parts) {
                 if (part["inlineData"] != null) {
                   final audioBase64 = part["inlineData"]["data"];
                   final audioBytes = base64Decode(audioBase64);
-
+                  // Bắn raw bytes ra stream để AudioPlayer phát
                   _audioController.add(audioBytes);
                 }
               }
             }
 
-            /// AI nói xong
+            // AI đã nói xong câu đó
             if (server["turnComplete"] == true) {
-              debugPrint("AI audio turn complete");
+              debugPrint("🤖 AI đã nói xong.");
               _audioCompleteController.add(null);
             }
           }
         } catch (e) {
-          debugPrint("Parse error: $e");
+          debugPrint("⚠️ Lỗi parse JSON từ Server: $e");
         }
       },
-
       onError: (error) {
-        debugPrint("WebSocket error: $error");
+        debugPrint("⚠️ Lỗi luồng WebSocket: $error");
         _reconnect();
       },
-
       onDone: () {
-        debugPrint("WebSocket closed");
-
-        final code = _channel?.closeCode;
-        final reason = _channel?.closeReason;
-
-        debugPrint("Close code: $code");
-        debugPrint("Close reason: $reason");
-
+        debugPrint("🛑 WebSocket đã đóng ngắt");
         _reconnect();
       },
     );
   }
 
-  /// setup message
+  // ==========================================
+  // 2. CẬP NHẬT LẠI MODEL VÀ GỬI SETUP
+  // ==========================================
   void _sendSetup() {
     final setup = {
       "setup": {
+        // Gọi chính xác tên con AI Native Audio này
         "model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
         "generationConfig": {
           "responseModalities": ["AUDIO"],
+          "speechConfig": {
+            "voiceConfig": {
+              "prebuiltVoiceConfig": {"voiceName": "Aoede"},
+            },
+          },
         },
       },
     };
 
     _channel?.sink.add(jsonEncode(setup));
-
-    debugPrint("Sent setup message");
+    debugPrint("📤 Đã gửi cấu hình Setup lên Server");
   }
 
-  /// send audio
+  // ==========================================
+  // 3. GỬI ÂM THANH REALTIME TỪ MICRO LÊN SERVER
+  // ==========================================
   void sendAudio(Uint8List audio) {
-    if (!_setupComplete || _state != GeminiConnectionState.ready) {
-      return;
-    }
+    if (!_setupComplete || _state != GeminiConnectionState.ready) return;
 
     final message = {
       "realtimeInput": {
@@ -179,9 +165,13 @@ class GeminiLiveService {
     _channel?.sink.add(jsonEncode(message));
   }
 
-  void interruptAI() {
+  // ==========================================
+  // 4. BÁO AI BIẾT USER ĐÃ NÓI XONG HOẶC NGẮT LỜI
+  // ==========================================
+  void sendTurnComplete() {
     if (!_setupComplete || _state != GeminiConnectionState.ready) return;
 
+    // Đã xóa phần 'BASE64_AUDIO' bị lỗi của bạn. Chỉ cần gửi tín hiệu turnComplete là đủ.
     final message = {
       "clientContent": {
         "turns": [
@@ -192,83 +182,36 @@ class GeminiLiveService {
     };
 
     _channel?.sink.add(jsonEncode(message));
-    debugPrint("Sent interrupt signal to AI");
+    debugPrint("🛑 Đã gửi tín hiệu User nói xong / Ngắt lời AI");
   }
 
   void _reconnect() {
     if (_state == GeminiConnectionState.reconnecting) return;
-
     _setState(GeminiConnectionState.reconnecting);
-
     _retry++;
-
     final delay = Duration(seconds: (1 << _retry).clamp(1, 10));
-
-    debugPrint("Reconnect in ${delay.inSeconds}s");
-
+    debugPrint("🔄 Thử kết nối lại sau ${delay.inSeconds}s...");
     Future.delayed(delay, () {
-      if (_apiKey != null) {
-        connect(_apiKey!);
-      }
+      connect();
     });
   }
 
   Future<void> disconnect() async {
-    _apiKey = null;
     await _socketSub?.cancel();
     _socketSub = null;
     await _channel?.sink.close();
     _channel = null;
-
     _setState(GeminiConnectionState.closed);
   }
 
   void _setState(GeminiConnectionState s) {
     _state = s;
-    debugPrint("WebSocket state → $_state");
-  }
-
-  Future<void> sendUserAudio(List<Uint8List> chunks) async {
-    if (!_setupComplete || _state != GeminiConnectionState.ready) return;
-
-    for (final audio in chunks) {
-      final message = {
-        "realtimeInput": {
-          "mediaChunks": [
-            {"mimeType": "audio/pcm;rate=16000", "data": base64Encode(audio)},
-          ],
-        },
-      };
-
-      _channel?.sink.add(jsonEncode(message));
-    }
-
-    /// báo cho Gemini biết user đã nói xong
-    final turnComplete = {
-      "clientContent": {
-        "turns": [
-          {
-            "role": "user",
-            "parts": [
-              {
-                "inlineData": {
-                  "mimeType": "audio/pcm;rate=16000",
-                  "data": "BASE64_AUDIO",
-                },
-              },
-            ],
-          },
-        ],
-        "turnComplete": true,
-      },
-    };
-
-    _channel?.sink.add(jsonEncode(turnComplete));
+    debugPrint("Trạng thái kết nối → $_state");
   }
 
   void dispose() {
-  disconnect();
-  _audioController.close();
-  _audioCompleteController.close();
-}
+    disconnect();
+    _audioController.close();
+    _audioCompleteController.close();
+  }
 }
