@@ -6,7 +6,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 
-const String geminiApiKey = 'REMOVED';
+const String geminiApiKey = '';
 const String geminiWsUrl =
     'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$geminiApiKey';
 final _router = Router()
