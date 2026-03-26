@@ -27,8 +27,6 @@ class AudioPlayerService {
         await init();
       }
 
-      if (_isStreaming) return;
-
       _lastAudio.clear();
 
       await _player.startPlayerFromStream(
@@ -50,8 +48,12 @@ class AudioPlayerService {
   Future<void> addAudio(Uint8List chunk) async {
     if (_disposed) return;
 
-    while (_isStarting) {
+    // while (_isStarting) {
+    //   await Future.delayed(const Duration(milliseconds: 10));
+    // }
+    if (_isStarting) {
       await Future.delayed(const Duration(milliseconds: 10));
+      return addAudio(chunk);
     }
 
     if (!_isStreaming) {
@@ -61,7 +63,6 @@ class AudioPlayerService {
     if (!_isStreaming) return;
 
     final sink = _player.uint8ListSink;
-
     if (sink == null) return;
 
     try {
@@ -73,11 +74,10 @@ class AudioPlayerService {
   }
 
   Future<void> stop() async {
-if (_disposed || !_isStreaming) return;
+    if (_disposed || !_isStreaming) return;
 
-    _isStreaming = false;
-    await Future.delayed(const Duration(milliseconds: 200));
-    
+    // await Future.delayed(const Duration(milliseconds: 200));
+
     // if (_isStreaming) {
     //   await _player.stopPlayer();
     //   _isStreaming = false;
@@ -87,6 +87,7 @@ if (_disposed || !_isStreaming) return;
     } catch (e) {
       debugPrint("⚠️ Lỗi khi tắt loa: $e");
     }
+    _isStreaming = false;
   }
 
   /// replay audio cuối

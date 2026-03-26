@@ -11,13 +11,15 @@ class VoiceChatService extends ChangeNotifier {
   final GeminiLiveService geminiService;
   final AudioPlayerService audioService;
 
+  bool _isUserSpeaking = false;
+  bool _isAiSpeaking = false;
+
   VoiceState _state = VoiceState.idle;
   VoiceState get state => _state;
 
   StreamSubscription? _micSub;
   StreamSubscription? _geminiSub;
 
-  bool _userStartedSpeaking = false;
   Timer? _silenceTimer;
   final double _volumeThreshold = 1200;
 
@@ -33,14 +35,26 @@ class VoiceChatService extends ChangeNotifier {
     await geminiService.connect();
 
     /// listen AI audio
+    // _geminiSub = geminiService.audioStream.listen((chunk) async {
+    //   if (_state != VoiceState.speaking) {
+    //     _setState(VoiceState.speaking);
+    //   }
+
+    //   if (_state == VoiceState.speaking) {
+    //     await audioService.addAudio(chunk);
+    //   }
+    // });
     _geminiSub = geminiService.audioStream.listen((chunk) async {
+      // 🚫 Nếu user đang nói → KHÔNG phát
+      if (_isUserSpeaking) return;
+
       if (_state != VoiceState.speaking) {
         _setState(VoiceState.speaking);
       }
 
-      if (_state == VoiceState.speaking) {
-        await audioService.addAudio(chunk);
-      }
+      _isAiSpeaking = true;
+
+      await audioService.addAudio(chunk);
     });
 
     /// AI finished
@@ -56,33 +70,66 @@ class VoiceChatService extends ChangeNotifier {
   Future<void> _startListeningLoop() async {
     await voiceService.startRecording();
     _setState(VoiceState.listening);
-    _userStartedSpeaking = false;
+    _isUserSpeaking = false;
+    _silenceTimer?.cancel();
     _micSub?.cancel();
-    
+
     // Lắng nghe stream từ mic
     _micSub = voiceService.audioStream.listen(_processMicChunk);
   }
 
   /// Xử lý mic chunk
-  void _processMicChunk(Uint8List chunk) {
-    double volume = _calculateVolume(chunk);
+  // void _processMicChunk(Uint8List chunk) {
+  //   double volume = _calculateVolume(chunk);
 
-    if (_userStartedSpeaking && _state == VoiceState.listening) {
-       geminiService.sendAudio(chunk); 
-    }
+  //   if (_userStartedSpeaking && _state == VoiceState.listening) {
+  //     geminiService.sendAudio(chunk);
+  //   }
+
+  //   if (volume > _volumeThreshold) {
+  //     if (!_userStartedSpeaking) {
+  //       _userStartedSpeaking = true;
+  //       debugPrint("🗣️ User started speaking");
+  //     }
+
+  //     // Hủy timer cũ (vì user vẫn đang nói)
+  //     _silenceTimer?.cancel();
+
+  //     // Đặt timer mới: Nếu 1.2s tiếp theo không có tiếng động lớn -> coi như nói xong
+  //     _silenceTimer = Timer(
+  //       const Duration(milliseconds: 1200),
+  //       _onUserStopSpeaking,
+  //     );
+  //   }
+  // }
+  void _processMicChunk(Uint8List chunk) {
+    if (_isAiSpeaking) return;
+
+    double volume = _calculateVolume(chunk);
+    
+    debugPrint("Volume: $volume | speaking: $_isUserSpeaking");
 
     if (volume > _volumeThreshold) {
-      if (!_userStartedSpeaking) {
-        _userStartedSpeaking = true;
+      if (!_isUserSpeaking) {
+        _isUserSpeaking = true;
         debugPrint("🗣️ User started speaking");
+
+        // interrupt AI nếu cần
+        if (_isAiSpeaking) {
+          audioService.stop();
+          _isAiSpeaking = false;
+          geminiService.sendTurnComplete();
+        }
       }
 
-      // Hủy timer cũ (vì user vẫn đang nói)
+      if (_state == VoiceState.listening) {
+        geminiService.sendAudio(chunk);
+      }
+
       _silenceTimer?.cancel();
 
-      // Đặt timer mới: Nếu 1.2s tiếp theo không có tiếng động lớn -> coi như nói xong
       _silenceTimer = Timer(
-        const Duration(milliseconds: 1200),
+        const Duration(milliseconds: 800),
         _onUserStopSpeaking,
       );
     }
@@ -90,29 +137,38 @@ class VoiceChatService extends ChangeNotifier {
 
   /// User dừng nói (kích hoạt bởi Silence Timer)
   Future<void> _onUserStopSpeaking() async {
-    if (!_userStartedSpeaking) return;
+    if (!_isUserSpeaking) return;
 
     debugPrint("🤫 User stopped speaking");
-    _userStartedSpeaking = false;
 
-    // Dừng thu âm để nhường mic cho việc khác (hoặc để tiết kiệm pin)
+    _isUserSpeaking = false;
+
     await voiceService.stopRecording();
     await _micSub?.cancel();
 
     _setState(VoiceState.thinking);
 
-    geminiService.sendTurnComplete(); 
+    geminiService.sendTurnComplete();
   }
 
   /// AI nói xong
+  // Future<void> onAiFinished() async {
+  //   /// dừng player
+  //   await audioService.stop();
+
+  //   /// chuyển state về idle tạm thời
+  //   _setState(VoiceState.idle);
+
+  //   /// bắt đầu turn mới (Mở mic lại để user có thể nói tiếp)
+  //   await _startListeningLoop();
+  // }
   Future<void> onAiFinished() async {
-    /// dừng player
     await audioService.stop();
 
-    /// chuyển state về idle tạm thời
+    _isAiSpeaking = false;
+
     _setState(VoiceState.idle);
 
-    /// bắt đầu turn mới (Mở mic lại để user có thể nói tiếp)
     await _startListeningLoop();
   }
 
@@ -158,7 +214,7 @@ class VoiceChatService extends ChangeNotifier {
   void disposeAll() {
     stop();
     // Giả sử các service này có hàm dispose()
-    voiceService.dispose(); 
+    voiceService.dispose();
     audioService.dispose();
     geminiService.dispose();
   }

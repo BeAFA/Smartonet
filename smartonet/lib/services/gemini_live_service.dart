@@ -28,7 +28,7 @@ class GeminiLiveService {
   bool _setupComplete = false;
   int _retry = 0;
 
-  final String _serverUrl = "ws://192.168.1.157:8080/ws";
+  final String _serverUrl = "ws://192.168.1.38:8080/ws";
 
   Future<void> connect() async {
     if (_state == GeminiConnectionState.connecting ||
@@ -141,6 +141,7 @@ class GeminiLiveService {
             },
           },
         },
+        "inputAudioTranscription": {},
       },
     };
 
@@ -169,20 +170,21 @@ class GeminiLiveService {
   // 4. BÁO AI BIẾT USER ĐÃ NÓI XONG HOẶC NGẮT LỜI
   // ==========================================
   void sendTurnComplete() {
-    if (!_setupComplete || _state != GeminiConnectionState.ready) return;
-
-    // Đã xóa phần 'BASE64_AUDIO' bị lỗi của bạn. Chỉ cần gửi tín hiệu turnComplete là đủ.
     final message = {
       "clientContent": {
         "turns": [
-          {"role": "user", "parts": []},
+          {
+            "role": "user",
+            "parts": [
+              {"text": "Bạn là trợ lý AI, trả lời bằng giọng nói."},
+            ],
+          },
         ],
         "turnComplete": true,
       },
     };
 
     _channel?.sink.add(jsonEncode(message));
-    debugPrint("🛑 Đã gửi tín hiệu User nói xong / Ngắt lời AI");
   }
 
   void _reconnect() {

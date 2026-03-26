@@ -15,7 +15,7 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
   bool isRecording = false;
   String status = "Chưa ghi âm";
   String lastWords = "";
-  String systemLocaleId = "vi_VN";
+  String systemLocaleId = "";
 
   @override
   void initState() {
@@ -38,38 +38,47 @@ class _VoiceRecordDialogState extends State<VoiceRecordDialog> {
         debugPrint("Speech status: $status");
       },
     );
+
     if (!speechEnabled) return;
 
-    final systemLocale = WidgetsBinding.instance.platformDispatcher.locale
-        .toString();
+    // 🔥 Lấy locale hệ thống
+    final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
+    String systemLocaleIdFull =
+        "${systemLocale.languageCode}_${systemLocale.countryCode}";
 
+    debugPrint("System locale: $systemLocaleIdFull");
+
+    // 🔥 Lấy danh sách locale speech hỗ trợ
     var locales = await speechToText.locales();
 
+    // 🔥 Tìm locale KHỚP NHẤT
     for (var locale in locales) {
-      debugPrint("${locale.name} - ${locale.localeId}");
-    }
-
-    // tìm locale speech phù hợp
-    for (var locale in locales) {
-      if (locale.localeId == systemLocale) {
+      if (locale.localeId == systemLocaleIdFull) {
         systemLocaleId = locale.localeId;
         break;
       }
     }
 
-    // nếu không tìm thấy thì fallback
+    // 🔥 Nếu không có exact match → fallback theo languageCode
     if (systemLocaleId.isEmpty) {
+      for (var locale in locales) {
+        if (locale.localeId.startsWith(systemLocale.languageCode)) {
+          systemLocaleId = locale.localeId;
+          break;
+        }
+      }
+    }
+
+    // 🔥 Nếu vẫn không có → lấy cái đầu tiên
+    if (systemLocaleId.isEmpty && locales.isNotEmpty) {
       systemLocaleId = locales.first.localeId;
     }
 
     debugPrint("Using speech locale: $systemLocaleId");
 
-    if (speechEnabled) {
-      startListening();
-    }
-    if (mounted) {
-      setState(() {});
-    }
+    startListening();
+
+    if (mounted) setState(() {});
   }
 
   void startListening() async {

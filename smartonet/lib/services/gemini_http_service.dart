@@ -12,9 +12,10 @@ class GeminiHttpService {
     String? chatHistory,
   }) async {
     // Tự động lấy API Key từ storage
+    String apiKey = 'REMOVED';
 
     final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$apiKey',
     );
 
     String contextData = "Danh sách trống.";
@@ -127,7 +128,9 @@ Câu của người dùng: "$userText"
     required AiExecutionResult executionResult,
     required List<Note> currentData,
   }) async {
-    String apiKey = await ApiKeyService.getApiKey() ?? '';
+    String apiKey =
+        await ApiKeyService.getApiKey() ??
+        'REMOVED';
     if (apiKey.isEmpty) return null;
 
     final url = Uri.parse(

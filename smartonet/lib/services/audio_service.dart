@@ -20,7 +20,9 @@ class AudioService {
   bool _initialized = false;
   bool _isCancelRequested = false;
 
-  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(children: []);
+  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
+    children: [],
+  );
   Timer? _previewTimer;
 
   Future<void> init() async {
@@ -52,7 +54,8 @@ class AudioService {
     await init();
     if (_player.playing) await _player.stop();
     try {
-      bool isFile = source.startsWith('/') || source.contains(Platform.pathSeparator);
+      bool isFile =
+          source.startsWith('/') || source.contains(Platform.pathSeparator);
       if (isFile) {
         if (await File(source).exists()) {
           await _player.setFilePath(source);
@@ -89,7 +92,11 @@ class AudioService {
       final manifestContent = await rootBundle.loadString('AssetManifest.json');
       final Map<String, dynamic> manifestMap = json.decode(manifestContent);
       return manifestMap.keys
-          .where((key) => key.startsWith('assets/Sounds/Default/') && (key.endsWith('.mp3') || key.endsWith('.wav')))
+          .where(
+            (key) =>
+                key.startsWith('assets/Sounds/Default/') &&
+                (key.endsWith('.mp3') || key.endsWith('.wav')),
+          )
           .toList();
     } catch (e) {
       return ['assets/Sounds/Default/alarm_digital.wav'];
@@ -110,7 +117,16 @@ class AudioService {
     List<String> sounds = [];
     if (await dir.exists()) {
       await for (var entity in dir.list()) {
-        if (entity is File) sounds.add(entity.path);
+        if (entity is File &&
+            [
+              '.mp3',
+              '.wav',
+              '.m4a',
+              '.aac',
+              '.ogg',
+            ].contains(p.extension(entity.path).toLowerCase())) {
+          sounds.add(entity.path);
+        }
       }
     }
     return sounds;
@@ -175,6 +191,7 @@ class AudioService {
 
   Future<void> pausePreview() async {
     _previewTimer?.cancel();
+    _previewTimer = null;
     if (_player.playing) await _player.pause();
   }
 
@@ -184,6 +201,7 @@ class AudioService {
 
   Future<void> stopPreview() async {
     _previewTimer?.cancel();
+    _previewTimer = null;
     _isCancelRequested = true;
     if (_player.playing) await _player.stop();
   }
@@ -203,11 +221,20 @@ class AudioService {
   }) async {
     _isCancelRequested = false;
     List<String> allPaths = [];
-    if (targetType == 'custom' || targetType == 'both') allPaths.addAll(await getCustomSounds());
-    if (targetType == 'default' || targetType == 'both') allPaths.addAll(await getDefaultSounds());
+    if (targetType == 'custom' || targetType == 'both') {
+      allPaths.addAll(await getCustomSounds());
+    }
+    if (targetType == 'default' || targetType == 'both') {
+      allPaths.addAll(await getDefaultSounds());
+    }
 
-    if (keyword != null && keyword.isNotEmpty && keyword.toLowerCase() != 'all') {
-      allPaths = allPaths.where((path) => p.basename(path).toLowerCase().contains(keyword.toLowerCase())).toList();
+    if (keyword != null &&
+        keyword.trim().isNotEmpty &&
+        keyword.toLowerCase() != 'all') {
+      final kw = keyword.trim().toLowerCase();
+      allPaths = allPaths
+          .where((path) => p.basename(path).toLowerCase().contains(kw))
+          .toList();
     }
 
     if (allPaths.isEmpty) {
@@ -215,23 +242,32 @@ class AudioService {
       return;
     }
 
-    if (playCount > 0 && playCount < allPaths.length) {
-      allPaths = allPaths.sublist(0, playCount);
+    if (playCount > 0) {
+      allPaths = allPaths.take(playCount).toList();
     }
 
     await init();
     _previewTimer?.cancel();
+    _previewTimer = null;
 
     // Dựng Playlist thực thụ
     List<AudioSource> sources = [];
     for (String path in allPaths) {
-      bool isFile = path.startsWith('/') || path.contains(Platform.pathSeparator);
-      // Dùng 'tag' để mang tên file truyền lên UI
-      if (isFile && await File(path).exists()) {
-        sources.add(AudioSource.uri(Uri.file(path), tag: p.basename(path)));
-      } else if (!isFile) {
+      final isAsset = path.startsWith('assets/');
+
+      if (isAsset) {
         sources.add(AudioSource.asset(path, tag: p.basename(path)));
+      } else {
+        final file = File(path);
+        if (await file.exists()) {
+          sources.add(AudioSource.uri(Uri.file(path), tag: p.basename(path)));
+        }
       }
+    }
+
+    if (sources.isEmpty) {
+      _log.warning("Không có source hợp lệ.");
+      return;
     }
 
     await _playlist.clear();
@@ -239,18 +275,19 @@ class AudioService {
     await _player.setAudioSource(_playlist);
 
     await _configureSessionUsage(AndroidAudioUsage.media);
-    
+
     try {
       await _player.setVolume(1.0);
       await _player.setLoopMode(LoopMode.off);
-      _player.play();
+      await _player.play();
 
       if (durationInSeconds == null) {
         // TRƯỜNG HỢP 1: Phát toàn bộ (Đợi nhạc chạy xong)
         await _player.playerStateStream.firstWhere(
-          (state) => state.processingState == ProcessingState.completed || 
-                     state.processingState == ProcessingState.idle || 
-                     _isCancelRequested
+          (state) =>
+              state.processingState == ProcessingState.completed ||
+              state.processingState == ProcessingState.idle ||
+              _isCancelRequested,
         );
       } else {
         // TRƯỜNG HỢP 2: Nghe thử giới hạn thời gian (Dùng Timer nhảy bài)
@@ -267,12 +304,13 @@ class AudioService {
             });
           }
         });
-        
+
         // Vẫn phải chặn (await) lại để màn hình UI không bị tắt sớm
         await _player.playerStateStream.firstWhere(
-          (state) => state.processingState == ProcessingState.completed || 
-                     state.processingState == ProcessingState.idle || 
-                     _isCancelRequested
+          (state) =>
+              state.processingState == ProcessingState.completed ||
+              state.processingState == ProcessingState.idle ||
+              _isCancelRequested,
         );
         seqSub.cancel();
       }

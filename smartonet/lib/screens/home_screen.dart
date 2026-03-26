@@ -690,6 +690,7 @@ class _MainScreenState extends State<MainScreen> {
         debugPrint("Text từ voice: $result");
       }
 
+
       // 3. Nếu người dùng có nói và bấm xác nhận
       if (result != null && result.isNotEmpty) {
         if (!context.mounted) return;
